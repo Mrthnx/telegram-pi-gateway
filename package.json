@@ -1,6 +1,6 @@
 {
   "name": "telegram-pi-gateway",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Standalone Telegram gateway for controlling local Pi coding-agent sessions from a Telegram bot.",
   "type": "module",
   "bin": {
