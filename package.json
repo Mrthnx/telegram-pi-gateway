@@ -1,0 +1,46 @@
+{
+  "name": "telegram-pi-gateway",
+  "version": "0.1.0",
+  "description": "Local personal Telegram gateway for controlling Pi coding-agent sessions from a Telegram bot.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Mrthnx",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Mrthnx/telegram-pi-gateway.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Mrthnx/telegram-pi-gateway/issues"
+  },
+  "homepage": "https://github.com/Mrthnx/telegram-pi-gateway#readme",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-coding-agent",
+    "telegram",
+    "telegram-bot",
+    "bun",
+    "coding-agent"
+  ],
+  "files": [
+    "src",
+    "Dockerfile",
+    ".dockerignore",
+    "env.example",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "dev": "bun --watch src/index.ts",
+    "start": "bun src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "latest",
+    "grammy": "latest"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "latest"
+  }
+}
