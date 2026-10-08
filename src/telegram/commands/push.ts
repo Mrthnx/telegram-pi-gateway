@@ -200,8 +200,8 @@ export function registerPushCommand(bot: Bot, store: JsonStore): void {
     console.info("[push:preview]", { id, projectPath, branch: preview.branch, ahead: preview.ahead, behind: preview.behind });
   });
 
-  bot.callbackQuery(/^pi:push:(confirm|cancel):([a-f0-9]+)$/u, async (ctx) => {
-    const match = ctx.callbackQuery?.data?.match(/^pi:push:(confirm|cancel):([a-f0-9]+)$/u);
+  bot.callbackQuery(/^pi:push:(confirm|cancel):([a-f0-9-]+)$/u, async (ctx) => {
+    const match = ctx.callbackQuery?.data?.match(/^pi:push:(confirm|cancel):([a-f0-9-]+)$/u);
     if (!match) return;
     const [, action, id] = match;
     const pending = takePending(id);
