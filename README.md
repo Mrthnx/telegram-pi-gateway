@@ -98,27 +98,83 @@ BotFather also supports the direct `/token` command for token management.
 
 References: [Telegram Bot Features](https://core.telegram.org/bots/features), [Telegram Bot Commands](https://core.telegram.org/api/bots/commands).
 
-## Download
+## Install
+
+This gateway runs outside Pi. Do not install it with `pi install`; install and run it as a normal background service.
+
+### From npm
+
+Install Bun first, because the gateway executes TypeScript with Bun:
+
+```bash
+curl -fsSL https://bun.sh/install | bash
+```
+
+Then install the gateway globally:
+
+```bash
+npm install -g telegram-pi-gateway
+```
+
+Set the required environment variables, then run it in the foreground:
+
+```bash
+export TELEGRAM_BOT_TOKEN="123:bot-token"
+export TELEGRAM_ALLOWED_USER_ID="123456789"
+export WORK_DIR="/Users/you/Developer"
+export DATA_DIR="$HOME/.telegram-pi-gateway/data"
+
+telegram-pi-gateway
+```
+
+### Run in background with PM2
+
+PM2 is the recommended npm-based background runner:
+
+```bash
+npm install -g pm2
+pm2 start telegram-pi-gateway --name telegram-pi-gateway --update-env
+pm2 save
+```
+
+Useful PM2 commands:
+
+```bash
+pm2 logs telegram-pi-gateway
+pm2 restart telegram-pi-gateway --update-env
+pm2 stop telegram-pi-gateway
+```
+
+To start again after reboot, run the command printed by:
+
+```bash
+pm2 startup
+```
+
+and then:
+
+```bash
+pm2 save
+```
+
+### From GitHub
 
 ```bash
 git clone https://github.com/Mrthnx/telegram-pi-gateway.git
 cd telegram-pi-gateway
+bun install
+bun start
+```
+
+For development with file watching:
+
+```bash
+bun dev
 ```
 
 ## Recommended run mode: Docker
 
-Docker is the recommended way to run the gateway because it keeps the bot alive after closing the terminal.
-
-## Optional local development
-
-Use this only while editing the project interactively:
-
-```bash
-bun install
-bun dev
-```
-
-`bun dev` runs with file watching and stops when the terminal/session ends. For normal usage, prefer Docker.
+Docker remains a good run mode if you prefer a containerized long-running process.
 
 ## Docker
 

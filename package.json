@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "description": "Standalone Telegram gateway for controlling local Pi coding-agent sessions from a Telegram bot.",
   "type": "module",
+  "bin": {
+    "telegram-pi-gateway": "./bin/telegram-pi-gateway.mjs"
+  },
   "license": "MIT",
   "author": "Mrthnx",
   "repository": {
@@ -25,6 +28,7 @@
     "coding-agent"
   ],
   "files": [
+    "bin",
     "src",
     "Dockerfile",
     ".dockerignore",
