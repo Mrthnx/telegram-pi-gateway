@@ -7,6 +7,7 @@ import { findProjects } from "../projects/discovery";
 import type { PiGatewaySessions } from "../pi/session-manager";
 import { splitTelegramMessage } from "../utils/messages";
 import type { TelegramInteractionBridge } from "./interactions";
+import { registerPushCommand } from "./commands/push";
 
 export function createTelegramBot(
   config: AppConfig,
@@ -90,6 +91,8 @@ export function createTelegramBot(
     }
     await ctx.reply(sessions.map((item, index) => `${index + 1}. ${item.projectPath}`).join("\n"));
   });
+
+  registerPushCommand(bot, store);
 
   bot.command("resume", async (ctx) => {
     const state = await store.readState();
@@ -592,6 +595,7 @@ function helpText(): string {
     "/reset — reinicia la sesión Pi del proyecto activo",
     "/sessions — lista sesiones guardadas",
     "/resume — recupera la sesión del proyecto activo",
+    "/push — hace `git push` del proyecto activo (con confirmación)",
     "/help — muestra esta ayuda",
     "",
     "Después de elegir proyecto, escribí normalmente y Pi responderá desde ese cwd.",
