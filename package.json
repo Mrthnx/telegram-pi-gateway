@@ -1,7 +1,7 @@
 {
   "name": "telegram-pi-gateway",
   "version": "0.1.0",
-  "description": "Local personal Telegram gateway for controlling Pi coding-agent sessions from a Telegram bot.",
+  "description": "Standalone Telegram gateway for controlling local Pi coding-agent sessions from a Telegram bot.",
   "type": "module",
   "license": "MIT",
   "author": "Mrthnx",
@@ -17,6 +17,8 @@
     "pi-package",
     "pi",
     "pi-coding-agent",
+    "pi-sdk",
+    "pi-gateway",
     "telegram",
     "telegram-bot",
     "bun",

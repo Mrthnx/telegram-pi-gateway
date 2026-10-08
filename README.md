@@ -1,6 +1,6 @@
 # Telegram Pi Gateway
 
-Local personal Telegram gateway for Pi SDK. It lets one authorized Telegram user select a project under `WORK_DIR` and talk to Pi with that project as the current working directory.
+Standalone local Telegram gateway for Pi SDK. It runs outside the Pi process, lets one authorized Telegram user select a project under `WORK_DIR`, and talks to Pi with that project as the current working directory.
 
 ## Requirements
 
@@ -193,9 +193,11 @@ The bot accepts Telegram photos, downloads the largest available image into `DAT
 
 ## Pi package gallery
 
-This repository includes npm metadata for Pi package discovery: `pi-package` keyword, repository links, license, and public package files.
+This project is a standalone Pi SDK gateway, not an in-process Pi extension or plugin. It does not register Pi tools, commands, event handlers, prompts, skills, or themes through a `pi` package manifest.
 
-To appear on [pi.dev/packages](https://pi.dev/packages), the package still needs to be published or indexed from an eligible package source. The GitHub repository alone is not enough for npm keyword discovery.
+The package keeps the `pi-package` npm keyword so it is eligible for discovery on [pi.dev/packages](https://pi.dev/packages), together with the repository, homepage, license, and public package metadata in `package.json`.
+
+To appear on the package gallery, the package still needs to be published or indexed from an eligible package source. The GitHub repository alone is not enough for npm keyword discovery.
 
 ## Security notes
 
