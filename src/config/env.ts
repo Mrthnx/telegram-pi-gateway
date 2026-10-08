@@ -6,6 +6,7 @@ export type AppConfig = {
   allowedUserId: number;
   workDir: string;
   dataDir: string;
+  piModel: string | undefined;
 };
 
 function required(name: string): string {
@@ -29,5 +30,6 @@ export async function loadConfig(): Promise<AppConfig> {
     allowedUserId: allowed,
     workDir: resolve(required("WORK_DIR")),
     dataDir,
+    piModel: process.env.PI_MODEL?.trim() || undefined,
   };
 }
