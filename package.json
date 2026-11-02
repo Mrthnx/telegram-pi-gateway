@@ -1,10 +1,10 @@
 {
   "name": "telegram-pi-gateway",
-  "version": "0.2.0",
-  "description": "Standalone Telegram gateway for controlling local Pi coding-agent sessions from a Telegram bot.",
+  "version": "0.3.0",
+  "description": "Standalone Telegram gateway for local Pi coding-agent sessions: chat with Pi from Telegram, send images and voice notes, and get answers with media back.",
   "type": "module",
   "bin": {
-    "telegram-pi-gateway": "./bin/telegram-pi-gateway.mjs"
+    "telegram-pi-gateway": "bin/telegram-pi-gateway.mjs"
   },
   "license": "MIT",
   "author": "Mrthnx",
@@ -25,7 +25,9 @@
     "telegram",
     "telegram-bot",
     "bun",
-    "coding-agent"
+    "coding-agent",
+    "media",
+    "voice-notes"
   ],
   "files": [
     "bin",
@@ -44,7 +46,8 @@
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "latest",
-    "grammy": "latest"
+    "grammy": "latest",
+    "typebox": "1.3.27"
   },
   "devDependencies": {
     "@types/bun": "latest",

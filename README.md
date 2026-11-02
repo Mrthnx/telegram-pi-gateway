@@ -2,6 +2,8 @@
 
 Standalone local Telegram gateway for Pi SDK. It runs outside the Pi process, lets one authorized Telegram user select a project under `WORK_DIR`, and talks to Pi with that project as the current working directory.
 
+It handles media in both directions: images and voice notes sent from Telegram reach Pi as attachments and transcripts, and Pi can answer with a photo, a document or a spoken voice note.
+
 ## Requirements
 
 - Docker Desktop for the recommended run mode
