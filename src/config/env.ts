@@ -1,5 +1,6 @@
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
+import { resolveModelSpec } from "../pi/model-spec";
 
 export type AppConfig = {
   telegramBotToken: string;
@@ -25,11 +26,20 @@ export async function loadConfig(): Promise<AppConfig> {
   await mkdir(dataDir, { recursive: true });
   await mkdir(resolve(dataDir, "downloads"), { recursive: true });
 
+  const model = resolveModelSpec({
+    gatewayModel: process.env.TELEGRAM_PI_MODEL,
+    piModel: process.env.PI_MODEL,
+    piProvider: process.env.PI_PROVIDER,
+  });
+  if (model.warning) {
+    console.warn(`[config] ${model.warning}`);
+  }
+
   return {
     telegramBotToken: required("TELEGRAM_BOT_TOKEN"),
     allowedUserId: allowed,
     workDir: resolve(required("WORK_DIR")),
     dataDir,
-    piModel: process.env.PI_MODEL?.trim() || undefined,
+    piModel: model.spec,
   };
 }

@@ -3,6 +3,7 @@ import { createAgentSession, defineTool, ModelRuntime } from "@earendil-works/pi
 import { Type } from "typebox";
 import type { JsonStore } from "../persistence/store";
 import type { TelegramInteractionBridge } from "../telegram/interactions";
+import { parseModelSpec } from "./model-spec";
 
 export type PiSessionHandle = Awaited<ReturnType<typeof createAgentSession>>["session"];
 
@@ -55,15 +56,10 @@ export class PiGatewaySessions {
 }
 
 function resolveModel(modelRuntime: ModelRuntime, spec: string) {
-  const trimmed = spec.trim();
-  if (trimmed.includes("/")) {
-    const [provider, ...idParts] = trimmed.split("/");
-    const id = idParts.join("/");
-    const model = modelRuntime.getModel(provider, id);
-    if (!model) throw new Error(`Configured Pi model was not found: ${trimmed}`);
-    return model;
-  }
-  throw new Error(`Configured Pi model must be in provider/id format: ${trimmed}`);
+  const { provider, id } = parseModelSpec(spec);
+  const model = modelRuntime.getModel(provider, id);
+  if (!model) throw new Error(`Configured Pi model was not found: ${spec.trim()}`);
+  return model;
 }
 
 function createTelegramAskOwnerTool(telegramBridge: TelegramInteractionBridge) {

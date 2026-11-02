@@ -18,9 +18,20 @@ export TELEGRAM_BOT_TOKEN="123:bot-token"
 export TELEGRAM_ALLOWED_USER_ID="123456789"
 export WORK_DIR="/Users/you/Developer"
 export DATA_DIR="./data" # optional
+export TELEGRAM_PI_MODEL="minimax/MiniMax-M3" # optional
 ```
 
 See `env.example`.
+
+### Model selection
+
+The gateway resolves the model it uses for Pi sessions as a `provider/id` pair. It picks it in this order:
+
+1. `TELEGRAM_PI_MODEL` — the gateway-owned variable. Use it to pin a model explicitly, as `provider/id`.
+2. `PI_MODEL` inherited from the Pi harness. If it already contains a `/`, it is used as-is. If it is a bare model id, it is composed with `PI_PROVIDER` (`minimax` + `MiniMax-M3` becomes `minimax/MiniMax-M3`).
+3. Neither is set, or a bare `PI_MODEL` has no `PI_PROVIDER` companion — the gateway uses the default Pi model and logs a warning.
+
+`PI_MODEL` and `PI_PROVIDER` are Pi harness variables, not gateway variables. The gateway inherits them whenever it is started from a Pi session, which is why the bare-id case is composed instead of rejected.
 
 ## Create and configure the Telegram bot
 

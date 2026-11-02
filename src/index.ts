@@ -16,6 +16,7 @@ process.once("SIGTERM", shutdown);
 console.log("Telegram Pi Gateway starting...");
 console.log(`WORK_DIR=${config.workDir}`);
 console.log(`DATA_DIR=${config.dataDir}`);
+console.log(`PI_MODEL=${config.piModel ?? "(default)"}`);
 
 await bot.start({
   allowed_updates: ["message", "callback_query"],
