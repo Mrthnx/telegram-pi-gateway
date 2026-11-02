@@ -282,3 +282,27 @@ export TELEGRAM_STT_COMMAND='["/path/to/transcriber","{audio}","--txt","{workdir
 ```
 
 `ffmpeg` has to be installed. `brew install ffmpeg`.
+
+## Answering with media
+
+Two Pi tools let the agent send you files:
+
+- `telegram_send_media` delivers a file from the active project (or from `DATA_DIR`) as a photo, a document or a voice note. The kind is inferred from the extension. Voice notes are only playable for `.ogg`, `.oga`, `.mp3` and `.m4a`; anything else is delivered as a document.
+- `telegram_send_voice` turns a text answer into a spoken voice note, synthesized locally with macOS `say` and encoded as OGG/OPUS. No credentials and no network call. The requested voice is validated against the voices macOS exposes, so a typo is an error instead of a silent fallback to the default voice.
+
+Files sent to Telegram are limited by the Bot API: 10 MB for a photo, 50 MB for a document or a voice note.
+
+## Pi package gallery
+
+This project is a standalone Pi SDK gateway, not an in-process Pi extension or plugin. It does not register Pi tools, commands, event handlers, prompts, skills, or themes through a `pi` package manifest.
+
+The package keeps the `pi-package` npm keyword so it is eligible for discovery on [pi.dev/packages](https://pi.dev/packages), together with the repository, homepage, license, and public package metadata in `package.json`.
+
+To appear on the package gallery, the package still needs to be published or indexed from an eligible package source. The GitHub repository alone is not enough for npm keyword discovery.
+
+## Security notes
+
+- The Telegram token must never be sent through chat.
+- Only `TELEGRAM_ALLOWED_USER_ID` can use the bot.
+- Project paths are resolved under `WORK_DIR`.
+- Heavy folders such as `node_modules`, `.git`, `dist`, `build`, `.next`, `vendor`, and caches are ignored during discovery.

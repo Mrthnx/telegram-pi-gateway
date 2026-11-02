@@ -9,11 +9,12 @@ in_progress
 - [x] T1 (S1, S3) Attach inbound images natively to the Pi prompt. Commit: feat(telegram): attach inbound images natively to the Pi prompt.
 - [x] T2 (S1) Transcribe inbound voice notes and audio files with a local engine. Commit: feat(telegram): transcribe inbound voice notes and audio files.
 - [x] T3 (S2) Add the `telegram_send_media` Pi tool. Commit: feat(pi): add the telegram_send_media tool.
-- [ ] T4 (S2) Reply with voice notes using macOS say.
+- [x] T4 (S2) Reply with voice notes using macOS say. Commit: feat(telegram): reply with voice notes.
 - [ ] T5 (S2) Generate images through a Pi image model. Dropped by owner decision: out of scope.
 
 ## Owner decisions
 - Inbound audio: local engine (mlx-whisper or whisper.cpp). The audio never leaves the machine.
+- Outbound audio: macOS `say`, no credentials.
 - Pi-native image generation: out of scope.
 
 ## Notes

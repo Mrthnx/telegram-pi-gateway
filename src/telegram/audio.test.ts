@@ -4,12 +4,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   detectTranscriber,
+  listSayVoices,
   normalizeAudioToWav,
   resetTranscriberCache,
   runCommand,
+  synthesizeVoiceNote,
 } from "./audio";
 
 const hasFfmpeg = Boolean(Bun.which("ffmpeg"));
+const hasSay = Boolean(Bun.which("say"));
 
 /** A minimal silent 16 kHz mono PCM WAV header plus a few samples. */
 function silentWav(): Uint8Array {
@@ -178,5 +181,42 @@ describe("normalizeAudioToWav", () => {
     await writeFile(input, "esto no es audio");
 
     await expect(normalizeAudioToWav(input, output)).rejects.toThrow("ffmpeg falló");
+  });
+});
+
+describe("synthesizeVoiceNote", () => {
+  test.skipIf(!hasSay || !hasFfmpeg)("writes a playable OGG voice note", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "telegram-voice-"));
+    const output = join(dir, "voice.ogg");
+
+    await synthesizeVoiceNote("Hola, esto es una prueba de voz.", output);
+
+    const bytes = await readFile(output);
+    expect(bytes.length).toBeGreaterThan(0);
+    expect(bytes.subarray(0, 4).toString("ascii")).toBe("OggS");
+  });
+
+  test.skipIf(!hasSay || !hasFfmpeg)("cleans up the intermediate files", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "telegram-voice-"));
+    const output = join(dir, "voice.ogg");
+
+    await synthesizeVoiceNote("otra prueba", output);
+
+    await expect(readFile(join(dir, "voice.ogg.txt"))).rejects.toThrow();
+    await expect(readFile(join(dir, "voice.aiff"))).rejects.toThrow();
+  });
+
+  test.skipIf(!hasSay || !hasFfmpeg)("reports an unknown voice instead of silently using the default one", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "telegram-voice-"));
+    const output = join(dir, "voice.ogg");
+
+    await expect(synthesizeVoiceNote("prueba", output, "Voz Que No Existe")).rejects.toThrow("no existe");
+  });
+
+  test.skipIf(!hasSay)("lists the available macOS voices", async () => {
+    const voices = await listSayVoices();
+
+    expect(voices.length).toBeGreaterThan(0);
+    expect(voices.some((name) => name.includes("Mónica") || name.includes("Alex"))).toBe(true);
   });
 });

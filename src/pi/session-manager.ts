@@ -4,6 +4,7 @@ import { createAgentSession, defineTool, ModelRuntime } from "@earendil-works/pi
 import { Type } from "typebox";
 import type { JsonStore } from "../persistence/store";
 import type { TelegramInteractionBridge } from "../telegram/interactions";
+import { synthesizeVoiceNote } from "../telegram/audio";
 import { parseModelSpec } from "./model-spec";
 
 export type PiSessionHandle = Awaited<ReturnType<typeof createAgentSession>>["session"];
@@ -41,6 +42,7 @@ export class PiGatewaySessions {
       customTools: [
         createTelegramAskOwnerTool(this.telegramBridge),
         createTelegramSendMediaTool(this.telegramBridge, projectPath, this.options.dataDir),
+        createTelegramSendVoiceTool(this.telegramBridge, projectPath, this.options.dataDir),
       ],
     });
     const handle = { id, projectPath, session };
@@ -100,6 +102,42 @@ function createTelegramSendMediaTool(telegramBridge: TelegramInteractionBridge, 
       );
       return {
         content: [{ type: "text", text: `Sent ${result.kind} to the Telegram owner: ${result.path}` }],
+        details: result,
+      };
+    },
+  });
+}
+
+function createTelegramSendVoiceTool(telegramBridge: TelegramInteractionBridge, projectPath: string, dataDir: string) {
+  const allowedRoots = [projectPath, dataDir];
+  return defineTool({
+    name: "telegram_send_voice",
+    label: "Send Voice Note To Telegram",
+    description: [
+      "Send a text answer to the Telegram owner as a playable voice note.",
+      "Use this when the owner asks to be answered with audio, or when a spoken answer is clearly better than a long text.",
+      "The audio is synthesized locally with the macOS 'say' voice, so it needs no credentials and no network call.",
+    ].join(" "),
+    promptSnippet: "Answer the Telegram owner with a spoken voice note.",
+    promptGuidelines: [
+      "This session is running through Telegram. When the owner asks for an audio answer, call telegram_send_voice with the text you want spoken.",
+      "Keep the text short: a voice note that runs for minutes is hard to listen to.",
+      "The voice note replaces the written answer, so do not also paste the same text in the reply.",
+    ],
+    parameters: Type.Object({
+      text: Type.String({ minLength: 1, maxLength: 4000 }),
+      voice: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
+    }),
+    executionMode: "sequential" as const,
+    execute: async (_toolCallId, params) => {
+      const outputPath = join(dataDir, "voice", `voice-${Date.now()}.ogg`);
+      await synthesizeVoiceNote(params.text, outputPath, params.voice);
+      const result = await telegramBridge.sendMedia(
+        { path: outputPath, kind: "voice" },
+        { baseDir: projectPath, allowedRoots },
+      );
+      return {
+        content: [{ type: "text", text: `Sent a voice note to the Telegram owner: ${result.path}` }],
         details: result,
       };
     },

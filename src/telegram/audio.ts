@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
 /** Sample rate the whisper models expect. */
@@ -235,4 +235,81 @@ async function readTranscriptFile(workDir: string, baseName: string): Promise<st
     }
   }
   return null;
+}
+
+let cachedVoices: string[] | undefined;
+
+/** The voices macOS exposes to `say`. */
+export async function listSayVoices(): Promise<string[]> {
+  if (cachedVoices) return cachedVoices;
+  const say = Bun.which("say");
+  if (!say) {
+    cachedVoices = [];
+    return cachedVoices;
+  }
+  const outcome = await runCommand(say, ["-v", "?"], { timeoutMs: 20_000 });
+  if (outcome.exitCode !== 0) {
+    cachedVoices = [];
+    return cachedVoices;
+  }
+  cachedVoices = outcome.stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map((line) => line.split(/\s{2,}/u)[0] ?? "")
+    .filter((name) => name.length > 0);
+  return cachedVoices;
+}
+
+/**
+ * Turns text into a playable Telegram voice note.
+ *
+ * macOS `say` does the synthesis and ffmpeg encodes the result as mono
+ * OGG/OPUS, which is the format Telegram renders as a voice message.
+ */
+export async function synthesizeVoiceNote(text: string, outputPath: string, voice?: string | undefined): Promise<void> {
+  const say = Bun.which("say");
+  if (!say) {
+    throw new Error("El comando 'say' de macOS no está disponible, no se puede sintetizar la nota de voz.");
+  }
+
+  if (voice) {
+    const voices = await listSayVoices();
+    const requested = voice.trim().toLowerCase();
+    if (voices.length > 0 && !voices.some((name) => name.toLowerCase() === requested)) {
+      const preview = voices.slice(0, 10).join(", ");
+      throw new Error(`La voz "${voice}" no existe. Voces disponibles: ${preview}`);
+    }
+  }
+
+  await mkdir(dirname(outputPath), { recursive: true });
+  const textFile = `${outputPath}.txt`;
+  const audioFile = outputPath.replace(/\.ogg$/u, ".aiff");
+  await writeFile(textFile, text, "utf8");
+
+  try {
+    let lastError = "sin detalle";
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const outcome = await runCommand(
+        say,
+        [...(voice ? ["-v", voice] : []), "-f", textFile, "-o", audioFile],
+        { timeoutMs: 60_000 },
+      );
+      if (outcome.exitCode === 0) {
+        lastError = "";
+        break;
+      }
+      lastError = outcome.stderr.trim() || outcome.stdout.trim() || `código de salida ${outcome.exitCode}`;
+      // The macOS speech service occasionally fails to start; one retry is
+      // enough to hide that without hiding a real error.
+      await Bun.sleep(500);
+    }
+    if (lastError) {
+      throw new Error(`say falló: ${lastError}`);
+    }
+    await runFfmpeg(["-i", audioFile, "-c:a", "libopus", "-b:a", "32k", "-ac", "1", "-ar", "48000", outputPath]);
+  } finally {
+    await rm(textFile, { force: true }).catch(() => undefined);
+    await rm(audioFile, { force: true }).catch(() => undefined);
+  }
 }
