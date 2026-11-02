@@ -83,20 +83,36 @@ export async function detectTranscriber(): Promise<Transcriber | null> {
 
   const configured = process.env.TELEGRAM_STT_COMMAND?.trim();
   if (configured) {
-    cachedTranscriber = configuredTranscriber(configured);
+    cachedTranscriber = withWorkDir(configuredTranscriber(configured));
     return cachedTranscriber;
   }
 
   for (const candidate of [mlxWhisperTranscriber, whisperCppTranscriber, openAiWhisperTranscriber]) {
     const found = await candidate();
     if (found) {
-      cachedTranscriber = found;
-      return found;
+      cachedTranscriber = withWorkDir(found);
+      return cachedTranscriber;
     }
   }
 
   cachedTranscriber = null;
   return null;
+}
+
+/**
+ * Makes sure the scratch directory exists before the engine runs.
+ *
+ * whisper.cpp needs it to write the transcript file and fails with a bare
+ * "1 input file(s) failed" when the directory is missing.
+ */
+function withWorkDir(transcriber: Transcriber): Transcriber {
+  return {
+    id: transcriber.id,
+    transcribe: async ({ audioPath, workDir }) => {
+      await mkdir(workDir, { recursive: true });
+      return transcriber.transcribe({ audioPath, workDir });
+    },
+  };
 }
 
 /** Only used by the tests, to drop the cached detection result. */
@@ -143,7 +159,8 @@ async function mlxWhisperTranscriber(): Promise<Transcriber | null> {
   return {
     id: "mlx-whisper",
     transcribe: async ({ audioPath, workDir }) => {
-      // mlx-whisper writes "<audio basename>.txt" next to the audio file.
+      // mlx-whisper writes "<audio basename>.txt" next to the audio file and
+      // detects the language on its own.
       const outcome = await runCommand(python, ["-m", "mlx_whisper", audioPath], { cwd: workDir });
       if (outcome.exitCode !== 0) {
         const detail = outcome.stderr.trim() || outcome.stdout.trim() || "sin detalle";
@@ -161,12 +178,24 @@ async function whisperCppTranscriber(): Promise<Transcriber | null> {
   if (!binary) return null;
   const model = await resolveWhisperCppModel();
   if (!model) return null;
+  // whisper-cli defaults to English, which would mistranscribe a Spanish note.
+  const language = process.env.TELEGRAM_STT_LANGUAGE?.trim() || "auto";
 
   return {
     id: "whisper.cpp",
     transcribe: async ({ audioPath, workDir }) => {
       const outputBase = join(workDir, "transcript");
-      const outcome = await runCommand(binary, ["-m", model, "-f", audioPath, "-otxt", "-of", outputBase]);
+      const outcome = await runCommand(binary, [
+        "-m",
+        model,
+        "-f",
+        audioPath,
+        "-l",
+        language,
+        "-otxt",
+        "-of",
+        outputBase,
+      ]);
       if (outcome.exitCode !== 0) {
         const detail = outcome.stderr.trim() || outcome.stdout.trim() || "sin detalle";
         throw new Error(`whisper.cpp falló: ${detail}`);

@@ -125,6 +125,32 @@ describe("detectTranscriber", () => {
     }
   });
 
+  test("creates the scratch directory before the engine runs", async () => {
+    resetTranscriberCache();
+    const previous = process.env.TELEGRAM_STT_COMMAND;
+    process.env.TELEGRAM_STT_COMMAND = JSON.stringify([
+      "/bin/sh",
+      "-c",
+      "printf 'con directorio' > \"{workdir}/transcript.txt\"",
+    ]);
+
+    try {
+      const transcriber = await detectTranscriber();
+      if (!transcriber) throw new Error("the configured transcriber was not detected");
+
+      const parent = await mkdtemp(join(tmpdir(), "telegram-stt-"));
+      const workDir = join(parent, "no-existe-aun");
+      const transcript = await transcriber.transcribe({ audioPath: join(parent, "nota.wav"), workDir });
+
+      expect(transcript).toBe("con directorio");
+      await expect(readFile(join(workDir, "transcript.txt"), "utf8")).resolves.toBe("con directorio");
+    } finally {
+      if (previous === undefined) delete process.env.TELEGRAM_STT_COMMAND;
+      else process.env.TELEGRAM_STT_COMMAND = previous;
+      resetTranscriberCache();
+    }
+  });
+
   test("rejects a malformed configured command", async () => {
     resetTranscriberCache();
     const previous = process.env.TELEGRAM_STT_COMMAND;

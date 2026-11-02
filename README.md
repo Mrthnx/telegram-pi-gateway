@@ -272,7 +272,15 @@ The bot accepts Telegram voice notes and audio files. It downloads the audio, no
 The gateway looks for an engine in this order:
 
 1. `mlx-whisper` — `pip install mlx-whisper` (Apple Silicon, fastest, models download on first use).
-2. `whisper.cpp` — `brew install whisper.cpp`, plus a `ggml-base.bin` model in `~/.cache/whisper/`.
+2. `whisper.cpp` — `brew install whisper.cpp`, plus the multilingual model:
+
+   ```bash
+   mkdir -p ~/.cache/whisper
+   curl -fL -o ~/.cache/whisper/ggml-base.bin \
+     https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin
+   ```
+
+   Use `ggml-base.bin`, not `ggml-base.en.bin`: the English-only model mistranslates everything else.
 3. The `openai-whisper` CLI — `pip install openai-whisper`.
 
 If none is installed the bot says so and keeps the file in `DATA_DIR/downloads`. To use a different engine, set `TELEGRAM_STT_COMMAND` to a JSON array of arguments, where `{audio}` is the normalized WAV and `{workdir}` is the scratch directory. The transcript is read from `{workdir}/transcript.txt` when the command writes it, and from the command output otherwise:
@@ -280,6 +288,8 @@ If none is installed the bot says so and keeps the file in `DATA_DIR/downloads`.
 ```bash
 export TELEGRAM_STT_COMMAND='["/path/to/transcriber","{audio}","--txt","{workdir}"]'
 ```
+
+`TELEGRAM_STT_LANGUAGE` overrides the spoken language. It defaults to `auto`, which matters for `whisper-cli`: its own default is English.
 
 `ffmpeg` has to be installed. `brew install ffmpeg`.
 
