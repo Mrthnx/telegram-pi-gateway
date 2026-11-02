@@ -1,0 +1,85 @@
+# Telegram media support
+
+## Goal
+
+Let the Telegram gateway accept images and audio from the owner, and let Pi answer with images and audio when asked. The feasibility review that produced this plan is in the Log; the short version is that images are natively supported end to end, while audio needs a transcription step in front of Pi and a speech step in front of Telegram.
+
+## Specs
+
+### S1
+
+> "quisiero que acepte audio y imagenes"
+
+The gateway must accept inbound media from the owner and hand it to Pi. Images arrive as Telegram photos or as image documents; audio arrives as Telegram voice notes or audio files.
+
+### S2
+
+> "También que me pueda responder audio o imágenes si le pido"
+
+Pi must be able to deliver media back to the owner over Telegram, not only describe it in text.
+
+### S3
+
+> "Revisa la factibilidad"
+
+The plan must state, per capability, whether it is feasible with the current Pi SDK, the current Telegram Bot API, the locally installed tooling, and the credentials the owner actually has.
+
+### S4
+
+> "Y el plan de trabajo"
+
+The work must be decomposed into reviewable units, each with its own commit.
+
+## Feasibility
+
+| Capability | Verdict | Evidence |
+| --- | --- | --- |
+| Inbound image → Pi | Feasible, no new credentials | `PromptOptions.images?: ImageContent[]` exists in the SDK (`core/agent-session.d.ts:174`); `ImageContent` is `{type:"image", data:string(base64), mimeType:string}` (`pi-ai/dist/types.d.ts:277`); `minimax/MiniMax-M3` declares `input: ["text","image"]` |
+| Inbound audio → Pi | Feasible only with a transcription step | `pi-ai` has no audio content type; the only "audio" token in the whole package is a pricing field. Voice notes are OGG/Opus, so Pi cannot consume them directly |
+| Outbound image → Telegram | Feasible, no new credentials | grammy `sendPhoto`/`sendDocument` accept `InputFile` (path, Buffer, ReadStream); Bot API upload limit is 50 MB |
+| Outbound audio → Telegram | Feasible with zero credentials | `sendVoice` requires OGG+OPUS, MP3 or M4A; macOS `say` produces AIFF/M4A and ffmpeg converts to mono OGG/OPUS 48 kHz (verified locally) |
+| Pi-native image generation | Feasible but needs a new credential | `ModelRuntime.generateImages()` exists; 60 image models exist, all under the `openrouter` provider, and the owner is not authenticated with openrouter |
+
+Blocked decisions, owned by the owner: the speech-to-text provider for inbound audio, the text-to-speech provider for outbound audio, and whether image generation is in scope at all.
+
+## Tasks
+
+- [x] T1 (S1, S3) Attach inbound images natively to the Pi prompt instead of only referencing the downloaded file. Inline. Commit: `feat(telegram): attach inbound images natively to the Pi prompt`.
+  - Evidence: `src/telegram/media.ts` downloads the media, detects the image mime type with the SDK `detectSupportedImageMimeTypeFromFile` and builds the inline `ImageContent` payload; `src/telegram/bot.ts` passes it to `session.prompt()` through `PromptOptions.images`. `modelSupportsImages` checks the active model before promising the owner the picture was seen. 16 new tests in `src/telegram/media.test.ts`, 26 in total, all green.
+  - Commit: `feat(telegram): attach inbound images natively to the Pi prompt`.
+  - Slice boundary: this unit closed at 581 authored changed lines, over the ~400-line review target. It was kept as one unit because the code, its tests and the document that describes them are the same behavior; the remaining units (T2, T3, T4, T5) each stay under the target on their own.
+- [ ] T2 (S1) Accept inbound voice notes and audio files: download, normalize with ffmpeg, transcribe, then prompt Pi with the transcript. Inline. Commit: `feat(telegram): transcribe inbound voice notes and audio files`. Blocked on the STT decision.
+- [ ] T3 (S2) Add a `telegram_send_media` Pi tool so the agent can deliver any local file to the owner as a photo, a document or a voice note. Inline. Commit: `feat(pi): add the telegram_send_media tool`.
+- [ ] T4 (S2) Turn a text answer into a voice note: synthesize, convert to OGG/OPUS, send. Inline. Commit: `feat(telegram): reply with voice notes`. Blocked on the TTS decision.
+- [ ] T5 (S2) Generate images through a Pi image model and deliver them. Inline. Commit: `feat(pi): generate images and deliver them to Telegram`. Blocked on the image-provider credential.
+
+## Constraints
+
+- Media files downloaded from Telegram stay under `DATA_DIR`; nothing is written outside it.
+- Files sent to Telegram must live inside the active project, or inside `DATA_DIR`, so the tool cannot be used to exfiltrate arbitrary paths.
+- The transcription and speech steps must never log raw audio or transcripts containing secrets beyond what the owner already sent in chat.
+- The `telegram_ask_owner` tool stays the only path for owner decisions; `telegram_send_media` never asks for confirmation.
+- Telegram download limit is 20 MB and the upload limit is 50 MB; both are enforced before transfer, not after.
+- The gateway must degrade instead of failing: a photo with a non-vision model must still be saved and reported, not dropped silently.
+
+## Log
+
+### L1 — 2026-11-02, original request
+
+> "ok arma commit de cada cosa porque quiero añadir cosas nuevas"
+
+That request closed the previous unit of work (the pending commits) and is recorded in `odd/tasks/` history.
+
+### L2 — 2026-11-02, this feature's request
+
+> "manda a master y luego sigamos con la siguiente tarea, quisiero que acepte audio y imagenes. Tambien que me pueda responder audio o imagenes si le pido. Revisa la factibilidad. Y el plan de trabajo"
+
+### L3 — 2026-11-02, feasibility findings
+
+- `PromptOptions.images` accepts `ImageContent[]`; the SDK path for inbound images needs no new dependency and no new credential.
+- `minimax/MiniMax-M3` declares `input: ["text","image"]`, but `minimax/MiniMax-M2.7` declares `input: ["text"]`. A gateway pinned to a text-only model must say so instead of dropping the image silently, which is what the SDK `read` tool does today.
+- `pi-ai` exposes no audio content type, so inbound audio cannot reach Pi as audio. It must be transcribed before the prompt.
+- The owner has Pi credentials for `minimax` and `openai-codex` only. There is no openrouter credential, so Pi-native image generation is currently blocked.
+- macOS `say` plus ffmpeg covers outbound voice notes with no credential at all; verified locally that `say` writes AIFF and M4A and that ffmpeg produces mono OGG/OPUS at 48 kHz.
+- Telegram constraints confirmed against the Bot API reference: `getFile` downloads up to 20 MB, uploads up to 50 MB, and `sendVoice` only renders as a playable voice note for OGG+OPUS, MP3 or M4A.
+- The SDK's public `resizeImage` is unusable in this runtime: its worker path resolves Photon to null and the in-process fallback only runs when the worker throws, not when it resolves null. `resizeImageInProcess` works but is not exported by the package and the deep import is blocked by the package `exports` map. T1 therefore attaches the raw bytes under a 5 MB cap instead of resizing; the downscale path belongs with the ffmpeg work that the audio unit needs anyway.

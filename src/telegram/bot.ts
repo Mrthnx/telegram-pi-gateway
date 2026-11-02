@@ -1,6 +1,5 @@
 import { Bot, InlineKeyboard, type Context } from "grammy";
-import { mkdir, writeFile } from "node:fs/promises";
-import { extname, join } from "node:path";
+import { join } from "node:path";
 import type { AppConfig } from "../config/env";
 import type { JsonStore, ProjectChoice } from "../persistence/store";
 import { findProjects } from "../projects/discovery";
@@ -8,6 +7,13 @@ import type { PiGatewaySessions } from "../pi/session-manager";
 import { splitTelegramMessage } from "../utils/messages";
 import type { TelegramInteractionBridge } from "./interactions";
 import { registerPushCommand } from "./commands/push";
+import {
+  buildImagePrompt,
+  downloadTelegramFile,
+  modelSupportsImages,
+  prepareImageAttachment,
+  type ImageAttachment,
+} from "./media";
 
 export function createTelegramBot(
   config: AppConfig,
@@ -112,6 +118,7 @@ export function createTelegramBot(
   bot.callbackQuery(/^project:select:(\d+)$/u, async (ctx) => handleProjectSelectionCallback(ctx, store));
 
   bot.on("message:photo", async (ctx) => handlePhoto(ctx, config, store, piSessions, telegramBridge));
+  bot.on("message:document", async (ctx) => handleDocument(ctx, config, store, piSessions, telegramBridge));
   bot.on("message:text", async (ctx) => handleText(ctx, store, piSessions, telegramBridge));
 
   return bot;
@@ -154,46 +161,91 @@ async function handlePhoto(
   telegramBridge: TelegramInteractionBridge,
 ): Promise<void> {
   telegramBridge.bindOwnerChat(ctx);
-  const state = await store.readState();
-  if (!state.activeProjectPath) {
-    await ctx.reply("Primero seleccioná un proyecto antes de mandar fotos.");
-    return;
-  }
-
   const photos = ctx.message?.photo;
   const largest = photos?.at(-1);
   if (!largest) return;
 
-  const file = await ctx.api.getFile(largest.file_id);
-  if (!file.file_path) {
-    await ctx.reply("No pude obtener la foto desde Telegram.");
+  await handleIncomingImage(ctx, config, store, piSessions, {
+    fileId: largest.file_id,
+    uniqueId: largest.file_unique_id,
+    caption: ctx.message?.caption?.trim(),
+  });
+}
+
+async function handleDocument(
+  ctx: Context,
+  config: AppConfig,
+  store: JsonStore,
+  piSessions: PiGatewaySessions,
+  telegramBridge: TelegramInteractionBridge,
+): Promise<void> {
+  telegramBridge.bindOwnerChat(ctx);
+  const document = ctx.message?.document;
+  if (!document) return;
+  if (!document.mime_type?.startsWith("image/")) return;
+
+  await handleIncomingImage(ctx, config, store, piSessions, {
+    fileId: document.file_id,
+    uniqueId: document.file_unique_id,
+    caption: ctx.message?.caption?.trim(),
+  });
+}
+
+async function handleIncomingImage(
+  ctx: Context,
+  config: AppConfig,
+  store: JsonStore,
+  piSessions: PiGatewaySessions,
+  source: { fileId: string; uniqueId: string; caption?: string | undefined },
+): Promise<void> {
+  const state = await store.readState();
+  const projectPath = state.activeProjectPath;
+  if (!projectPath) {
+    await ctx.reply("Primero seleccioná un proyecto antes de mandar imágenes.");
     return;
   }
 
-  const url = `https://api.telegram.org/file/bot${config.telegramBotToken}/${file.file_path}`;
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`Telegram file download failed: ${response.status}`);
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  const ext = extname(file.file_path) || ".jpg";
-  const downloadsDir = join(config.dataDir, "downloads");
-  await mkdir(downloadsDir, { recursive: true });
-  const path = join(downloadsDir, `${Date.now()}-${largest.file_unique_id}${ext}`);
-  await writeFile(path, bytes);
+  let downloaded;
+  try {
+    downloaded = await downloadTelegramFile({
+      api: ctx.api,
+      token: config.telegramBotToken,
+      fileId: source.fileId,
+      uniqueId: source.uniqueId,
+      dir: join(config.dataDir, "downloads"),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await ctx.reply(`No pude descargar la imagen: ${message}`);
+    return;
+  }
 
-  const caption = ctx.message?.caption?.trim();
-  const prompt = [
-    "El usuario envió una foto desde Telegram.",
-    `Ruta local descargada: ${path}`,
-    caption ? `Caption del usuario: ${caption}` : undefined,
-    "Si el modelo/herramientas disponibles no pueden leer imágenes, explicá esa limitación y pedí una descripción textual.",
-  ].filter(Boolean).join("\n");
+  const handle = await piSessions.get(projectPath);
+  const supportsImages = modelSupportsImages(handle.session.model);
+  const prepared = supportsImages ? await prepareImageAttachment(downloaded.bytes, downloaded.path) : null;
+  const attached = prepared?.ok === true;
 
-  void runPiPrompt(ctx, piSessions, state.activeProjectPath, prompt).catch((error) => {
+  if (!supportsImages) {
+    await ctx.reply("⚠️ El modelo activo no acepta imágenes; te paso la ruta del archivo.");
+  } else if (!attached) {
+    await ctx.reply("⚠️ No pude adjuntar la imagen al mensaje; quedó guardada en disco.");
+  }
+
+  const prompt = buildImagePrompt({ path: downloaded.path, caption: source.caption, attached });
+  const images = prepared && prepared.ok ? [prepared.image] : undefined;
+
+  void runPiPrompt(ctx, piSessions, projectPath, prompt, images).catch((error) => {
     console.error("[pi-run:unhandled]", error instanceof Error ? { name: error.name, message: error.message } : error);
   });
 }
 
-async function runPiPrompt(ctx: Context, piSessions: PiGatewaySessions, projectPath: string, prompt: string): Promise<void> {
+async function runPiPrompt(
+  ctx: Context,
+  piSessions: PiGatewaySessions,
+  projectPath: string,
+  prompt: string,
+  images?: ImageAttachment[],
+): Promise<void> {
   const requestId = `${Date.now()}-${ctx.message?.message_id ?? "unknown"}`;
   let unsubscribe: (() => void) | undefined;
   let streamedAnswer = "";
@@ -344,6 +396,7 @@ async function runPiPrompt(ctx: Context, piSessions: PiGatewaySessions, projectP
         promptDisposition = disposition;
         console.info("[pi-run:preflight]", { requestId, disposition });
       },
+      ...(images && images.length > 0 ? { images } : {}),
     });
 
     unsubscribe();

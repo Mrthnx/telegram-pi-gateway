@@ -254,9 +254,18 @@ Docker needs access to your host Pi configuration, credentials, skills, and proj
 
 After selecting a project, send normal messages. The bot replies `Trabajando...` while Pi runs and then sends the answer, split across multiple Telegram messages if needed.
 
-## Photos
+## Images
 
-The bot accepts Telegram photos, downloads the largest available image into `DATA_DIR/downloads`, and prompts Pi with the local image path plus any caption. Full multimodal handling depends on the active Pi model/SDK support; if the model cannot inspect images, Pi should ask for a textual description.
+The bot accepts Telegram photos and image documents. It downloads the largest available image into `DATA_DIR/downloads` and attaches it to the Pi prompt, so the model looks at the picture directly instead of receiving a path and having to go fetch it. The local path and the caption are passed along as well, so the agent can crop, edit or otherwise work on the file.
+
+Two limits are enforced:
+
+- Telegram only lets a bot download files of up to 20 MB.
+- Images larger than 5 MB are kept on disk instead of being attached inline. The bot says so in chat instead of failing silently.
+
+If the active model does not accept image input, the bot tells you and passes only the file path. A model accepts images when it declares `image` in its input capabilities; `minimax/MiniMax-M3` does, `minimax/MiniMax-M2.7` does not.
+
+Audio is not supported yet. See `odd/tasks/telegram-media-support.md` for the plan.
 
 ## Pi package gallery
 
