@@ -435,111 +435,119 @@ async function runPiPrompt(
   });
 
   try {
-    const handle = await piSessions.get(projectPath);
-    console.info("[pi-run:session-ready]", {
-      requestId,
-      sessionId: handle.id,
-      existingMessages: handle.session.messages.length,
-      model: handle.session.model?.id,
-      activeTools: handle.session.getActiveToolNames(),
-    });
-
-    unsubscribe = handle.session.subscribe((event) => {
-      logPiEvent(requestId, event);
-      updateStatusFromEvent(event);
-      if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
-        streamedAnswer += event.assistantMessageEvent.delta;
-      }
-      if (event.type === "message_end" && event.message.role === "assistant") {
-        completedAnswer = extractAssistantText(event.message);
-        console.info("[pi-run:message-end-assistant]", {
+    await piSessions.runExclusive(
+      projectPath,
+      async (handle) => {
+        console.info("[pi-run:session-ready]", {
           requestId,
-          completedAnswerLength: completedAnswer.length,
-          completedAnswerPreview: previewText(completedAnswer),
-          message: summarizeMessage(event.message),
+          sessionId: handle.id,
+          existingMessages: handle.session.messages.length,
+          model: handle.session.model?.id,
+          activeTools: handle.session.getActiveToolNames(),
         });
-      }
-      if (event.type === "agent_end") {
-        const lastAssistant = [...event.messages].reverse().find((message) => message.role === "assistant");
-        if (lastAssistant) completedAnswer = extractAssistantText(lastAssistant);
-        console.info("[pi-run:agent-end]", {
+
+        unsubscribe = handle.session.subscribe((event) => {
+          logPiEvent(requestId, event);
+          updateStatusFromEvent(event);
+          if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
+            streamedAnswer += event.assistantMessageEvent.delta;
+          }
+          if (event.type === "message_end" && event.message.role === "assistant") {
+            completedAnswer = extractAssistantText(event.message);
+            console.info("[pi-run:message-end-assistant]", {
+              requestId,
+              completedAnswerLength: completedAnswer.length,
+              completedAnswerPreview: previewText(completedAnswer),
+              message: summarizeMessage(event.message),
+            });
+          }
+          if (event.type === "agent_end") {
+            const lastAssistant = [...event.messages].reverse().find((message) => message.role === "assistant");
+            if (lastAssistant) completedAnswer = extractAssistantText(lastAssistant);
+            console.info("[pi-run:agent-end]", {
+              requestId,
+              willRetry: event.willRetry,
+              messageCount: event.messages.length,
+              completedAnswerLength: completedAnswer.length,
+              lastMessages: summarizeLastMessages(event.messages),
+            });
+          }
+        });
+
+        await handle.session.prompt(prompt, {
+          source: "rpc",
+          preflightResult: (disposition) => {
+            promptDisposition = disposition;
+            console.info("[pi-run:preflight]", { requestId, disposition });
+          },
+          ...(images && images.length > 0 ? { images } : {}),
+        });
+
+        unsubscribe();
+        unsubscribe = undefined;
+
+        const lastAssistant = [...handle.session.messages].reverse().find((message) => message.role === "assistant") as
+          | { stopReason?: string; errorMessage?: string }
+          | undefined;
+        const lastAssistantText = handle.session.getLastAssistantText() ?? "";
+        const answer = completedAnswer.trim() || lastAssistantText || streamedAnswer.trim();
+        console.info("[pi-run:answer-selected]", {
           requestId,
-          willRetry: event.willRetry,
-          messageCount: event.messages.length,
-          completedAnswerLength: completedAnswer.length,
-          lastMessages: summarizeLastMessages(event.messages),
+          promptDisposition,
+          completedAnswerLength: completedAnswer.trim().length,
+          lastAssistantTextLength: lastAssistantText.length,
+          streamedAnswerLength: streamedAnswer.trim().length,
+          selectedAnswerLength: answer.trim().length,
+          selectedAnswerPreview: previewText(answer),
+          finalMessageCount: handle.session.messages.length,
+          lastMessages: summarizeLastMessages(handle.session.messages),
         });
-      }
-    });
 
-    await handle.session.prompt(prompt, {
-      source: "rpc",
-      preflightResult: (disposition) => {
-        promptDisposition = disposition;
-        console.info("[pi-run:preflight]", { requestId, disposition });
-      },
-      ...(images && images.length > 0 ? { images } : {}),
-    });
-
-    unsubscribe();
-    unsubscribe = undefined;
-
-    const lastAssistant = [...handle.session.messages].reverse().find((message) => message.role === "assistant") as
-      | { stopReason?: string; errorMessage?: string }
-      | undefined;
-    const lastAssistantText = handle.session.getLastAssistantText() ?? "";
-    const answer = completedAnswer.trim() || lastAssistantText || streamedAnswer.trim();
-    console.info("[pi-run:answer-selected]", {
-      requestId,
-      promptDisposition,
-      completedAnswerLength: completedAnswer.trim().length,
-      lastAssistantTextLength: lastAssistantText.length,
-      streamedAnswerLength: streamedAnswer.trim().length,
-      selectedAnswerLength: answer.trim().length,
-      selectedAnswerPreview: previewText(answer),
-      finalMessageCount: handle.session.messages.length,
-      lastMessages: summarizeLastMessages(handle.session.messages),
-    });
-
-    if (!answer.trim()) {
-      console.warn("[pi-run:empty-answer] Pi run completed without textual assistant output", {
-        requestId,
-        projectPath,
-        promptDisposition,
-        messageCount: handle.session.messages.length,
-        lastMessages: summarizeLastMessages(handle.session.messages),
-      });
-    }
-
-    clearStatusTimer();
-
-    if (!answer.trim() && lastAssistant?.stopReason === "error") {
-      const message = lastAssistant.errorMessage
-        ? `Pi falló antes de producir una respuesta textual:\n${lastAssistant.errorMessage}`
-        : "Pi falló antes de producir una respuesta textual. Revisá los logs del gateway para ver el error del modelo.";
-      await deleteStatusMessage();
-      for (const chunk of splitTelegramMessage(message)) await ctx.reply(chunk);
-      return;
-    }
-
-    const chunks = splitTelegramMessage(answer);
-    if (chunks.length === 1 && statusMessageId !== undefined && chatId !== undefined) {
-      try {
-        await ctx.api.editMessageText(chatId, statusMessageId, chunks[0]);
-        statusMessageId = undefined;
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        if (!/not modified|message to edit not found|message is empty/i.test(message)) {
-          console.warn("[pi-run:status-morph-failed]", { requestId, message });
+        if (!answer.trim()) {
+          console.warn("[pi-run:empty-answer] Pi run completed without textual assistant output", {
+            requestId,
+            projectPath,
+            promptDisposition,
+            messageCount: handle.session.messages.length,
+            lastMessages: summarizeLastMessages(handle.session.messages),
+          });
         }
-        await deleteStatusMessage();
-        await ctx.reply(chunks[0]);
-      }
-      return;
-    }
 
-    await deleteStatusMessage();
-    for (const chunk of chunks) await ctx.reply(chunk);
+        clearStatusTimer();
+
+        if (!answer.trim() && lastAssistant?.stopReason === "error") {
+          const message = lastAssistant.errorMessage
+            ? `Pi falló antes de producir una respuesta textual:\n${lastAssistant.errorMessage}`
+            : "Pi falló antes de producir una respuesta textual. Revisá los logs del gateway para ver el error del modelo.";
+          await deleteStatusMessage();
+          for (const chunk of splitTelegramMessage(message)) await ctx.reply(chunk);
+          return;
+        }
+
+        const chunks = splitTelegramMessage(answer);
+        if (chunks.length === 1 && statusMessageId !== undefined && chatId !== undefined) {
+          try {
+            await ctx.api.editMessageText(chatId, statusMessageId, chunks[0]);
+            statusMessageId = undefined;
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            if (!/not modified|message to edit not found|message is empty/i.test(message)) {
+              console.warn("[pi-run:status-morph-failed]", { requestId, message });
+            }
+            await deleteStatusMessage();
+            await ctx.reply(chunks[0]);
+          }
+          return;
+        }
+
+        await deleteStatusMessage();
+        for (const chunk of chunks) await ctx.reply(chunk);
+      },
+      () => {
+        console.info("[pi-run:queued]", { requestId, projectPath });
+        void editStatusMessage("⏳ En cola: hay una tarea anterior en curso…");
+      },
+    );
   } catch (error) {
     unsubscribe?.();
     clearStatusTimer();

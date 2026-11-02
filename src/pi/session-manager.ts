@@ -5,6 +5,7 @@ import { Type } from "typebox";
 import type { JsonStore } from "../persistence/store";
 import type { TelegramInteractionBridge } from "../telegram/interactions";
 import { synthesizeVoiceNote, defaultVoice } from "../telegram/audio";
+import { SerialQueue } from "../utils/serial-queue";
 import { parseModelSpec } from "./model-spec";
 
 export type PiSessionHandle = Awaited<ReturnType<typeof createAgentSession>>["session"];
@@ -18,6 +19,7 @@ type CachedSession = {
 export class PiGatewaySessions {
   private readonly cache = new Map<string, CachedSession>();
   private readonly modelRuntimePromise = ModelRuntime.create();
+  private readonly queue = new SerialQueue();
 
   constructor(
     private readonly store: JsonStore,
@@ -49,6 +51,22 @@ export class PiGatewaySessions {
     this.cache.set(projectPath, handle);
     await this.store.upsertSession(projectPath, id);
     return handle;
+  }
+
+  /**
+   * Runs a task with exclusive access to the session of a project.
+   *
+   * The SDK rejects a prompt while the agent is streaming and broadcasts the
+   * session events to every subscriber, so two turns running at the same time
+   * would make the second one fail and mix the answers. One turn per session
+   * at a time avoids both.
+   */
+  async runExclusive<T>(
+    projectPath: string,
+    task: (handle: CachedSession) => Promise<T>,
+    onQueued?: () => void,
+  ): Promise<T> {
+    return this.queue.run(projectPath, async () => task(await this.get(projectPath)), onQueued);
   }
 
   async reset(projectPath: string): Promise<CachedSession> {
