@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { join } from "node:path";
 import { createAgentSession, defineTool, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { JsonStore } from "../persistence/store";
@@ -20,7 +21,7 @@ export class PiGatewaySessions {
   constructor(
     private readonly store: JsonStore,
     private readonly telegramBridge: TelegramInteractionBridge,
-    private readonly options: { piModel?: string | undefined; dataDir?: string | undefined },
+    private readonly options: { piModel?: string | undefined; dataDir: string },
   ) {}
 
   async get(projectPath: string): Promise<CachedSession> {

@@ -42,17 +42,25 @@ The work must be decomposed into reviewable units, each with its own commit.
 
 Blocked decisions, owned by the owner: the speech-to-text provider for inbound audio, the text-to-speech provider for outbound audio, and whether image generation is in scope at all.
 
+## Owner decisions
+
+- 2026-11-02: inbound audio is transcribed with a **local** engine (mlx-whisper or whisper.cpp). The audio never leaves the machine.
+- 2026-11-02: outbound audio is synthesized with **macOS `say`**, so it needs no credentials and no network call.
+- 2026-11-02: Pi-native image generation is **out of scope**. The agent delivers the files it produces; generating them is the agent's own job.
+
 ## Tasks
 
 - [x] T1 (S1, S3) Attach inbound images natively to the Pi prompt instead of only referencing the downloaded file. Inline. Commit: `feat(telegram): attach inbound images natively to the Pi prompt`.
   - Evidence: `src/telegram/media.ts` downloads the media, detects the image mime type with the SDK `detectSupportedImageMimeTypeFromFile` and builds the inline `ImageContent` payload; `src/telegram/bot.ts` passes it to `session.prompt()` through `PromptOptions.images`. `modelSupportsImages` checks the active model before promising the owner the picture was seen. 16 new tests in `src/telegram/media.test.ts`, 26 in total, all green.
   - Commit: `feat(telegram): attach inbound images natively to the Pi prompt`.
   - Slice boundary: this unit closed at 581 authored changed lines, over the ~400-line review target. It was kept as one unit because the code, its tests and the document that describes them are the same behavior; the remaining units (T2, T3, T4, T5) each stay under the target on their own.
-- [ ] T2 (S1) Accept inbound voice notes and audio files: download, normalize with ffmpeg, transcribe, then prompt Pi with the transcript. Inline. Commit: `feat(telegram): transcribe inbound voice notes and audio files`. Blocked on the STT decision.
+- [x] T2 (S1) Accept inbound voice notes and audio files: download, normalize with ffmpeg, transcribe, then prompt Pi with the transcript. Inline. Commit: `feat(telegram): transcribe inbound voice notes and audio files`.
+  - Evidence: `src/telegram/audio.ts` normalizes any container to 16 kHz mono PCM WAV with ffmpeg and looks for a local engine in this order: `mlx-whisper`, `whisper.cpp`, the `openai-whisper` CLI, and finally an explicit `TELEGRAM_STT_COMMAND`. `src/telegram/bot.ts` handles `message:voice` and `message:audio`, and reports clearly when no engine is installed instead of dropping the audio.
+  - No engine is installed on this machine yet, so the whisper invocation itself is unverified; the surrounding plumbing is covered by tests that drive the configured-command path with a real subprocess.
 - [x] T3 (S2) Add a `telegram_send_media` Pi tool so the agent can deliver any local file to the owner as a photo, a document or a voice note. Inline. Commit: `feat(pi): add the telegram_send_media tool`.
   - Evidence: `src/telegram/media.ts` resolves the delivery kind from the extension, enforces the Bot API upload ceilings (10 MB for a photo, 50 MB for a document or a voice note) and resolves the path through `realpath` before checking containment, so a symlink cannot escape the project. `src/telegram/interactions.ts` `sendMedia` performs the upload. `src/pi/session-manager.ts` registers the tool per session, scoped to the active project plus the gateway data directory.
-- [ ] T4 (S2) Turn a text answer into a voice note: synthesize, convert to OGG/OPUS, send. Inline. Commit: `feat(telegram): reply with voice notes`. Blocked on the TTS decision.
-- [ ] T5 (S2) Generate images through a Pi image model and deliver them. Inline. Commit: `feat(pi): generate images and deliver them to Telegram`. Blocked on the image-provider credential.
+- [ ] T4 (S2) Turn a text answer into a voice note: synthesize, convert to OGG/OPUS, send. Inline. Commit: `feat(telegram): reply with voice notes`.
+- [ ] T5 (S2) Generate images through a Pi image model and deliver them. Dropped on 2026-11-02 by owner decision: out of scope for this feature.
 
 ## Constraints
 
@@ -85,3 +93,4 @@ That request closed the previous unit of work (the pending commits) and is recor
 - Telegram constraints confirmed against the Bot API reference: `getFile` downloads up to 20 MB, uploads up to 50 MB, and `sendVoice` only renders as a playable voice note for OGG+OPUS, MP3 or M4A.
 - The SDK's public `resizeImage` is unusable in this runtime: its worker path resolves Photon to null and the in-process fallback only runs when the worker throws, not when it resolves null. `resizeImageInProcess` works but is not exported by the package and the deep import is blocked by the package `exports` map. T1 therefore attaches the raw bytes under a 5 MB cap instead of resizing; the downscale path belongs with the ffmpeg work that the audio unit needs anyway.
 - `sendVoice` only renders as a playable voice note for OGG+OPUS, MP3 and M4A, so the tool falls back to `sendDocument` for any other audio format instead of sending something Telegram will show as a broken attachment.
+- The `openai-whisper` CLI and the `whisper.cpp` CLI have confusingly similar names, so detection checks `whisper-cli` first for whisper.cpp and `whisper` for the openai one. The Homebrew formula is `whisper.cpp`, not `whisper-cpp`.

@@ -7,10 +7,14 @@ in_progress
 
 ## Tasks
 - [x] T1 (S1, S3) Attach inbound images natively to the Pi prompt. Commit: feat(telegram): attach inbound images natively to the Pi prompt.
-- [ ] T2 (S1) Transcribe inbound voice notes and audio files. Blocked on the STT decision.
+- [x] T2 (S1) Transcribe inbound voice notes and audio files with a local engine. Commit: feat(telegram): transcribe inbound voice notes and audio files.
 - [x] T3 (S2) Add the `telegram_send_media` Pi tool. Commit: feat(pi): add the telegram_send_media tool.
-- [ ] T4 (S2) Reply with voice notes. Blocked on the TTS decision.
-- [ ] T5 (S2) Generate images through a Pi image model. Blocked on the image-provider credential.
+- [ ] T4 (S2) Reply with voice notes using macOS say.
+- [ ] T5 (S2) Generate images through a Pi image model. Dropped by owner decision: out of scope.
+
+## Owner decisions
+- Inbound audio: local engine (mlx-whisper or whisper.cpp). The audio never leaves the machine.
+- Pi-native image generation: out of scope.
 
 ## Notes
 - Images are natively supported end to end: `PromptOptions.images` takes `ImageContent[]` and `minimax/MiniMax-M3` declares `input: ["text","image"]`.

@@ -265,19 +265,20 @@ Two limits are enforced:
 
 If the active model does not accept image input, the bot tells you and passes only the file path. A model accepts images when it declares `image` in its input capabilities; `minimax/MiniMax-M3` does, `minimax/MiniMax-M2.7` does not.
 
-Audio is not supported yet. See `odd/tasks/telegram-media-support.md` for the plan.
+## Voice notes
 
-## Pi package gallery
+The bot accepts Telegram voice notes and audio files. It downloads the audio, normalizes it to 16 kHz mono with `ffmpeg`, transcribes it with a **local** engine and sends the transcript to Pi, so the audio never leaves your machine.
 
-This project is a standalone Pi SDK gateway, not an in-process Pi extension or plugin. It does not register Pi tools, commands, event handlers, prompts, skills, or themes through a `pi` package manifest.
+The gateway looks for an engine in this order:
 
-The package keeps the `pi-package` npm keyword so it is eligible for discovery on [pi.dev/packages](https://pi.dev/packages), together with the repository, homepage, license, and public package metadata in `package.json`.
+1. `mlx-whisper` — `pip install mlx-whisper` (Apple Silicon, fastest, models download on first use).
+2. `whisper.cpp` — `brew install whisper.cpp`, plus a `ggml-base.bin` model in `~/.cache/whisper/`.
+3. The `openai-whisper` CLI — `pip install openai-whisper`.
 
-To appear on the package gallery, the package still needs to be published or indexed from an eligible package source. The GitHub repository alone is not enough for npm keyword discovery.
+If none is installed the bot says so and keeps the file in `DATA_DIR/downloads`. To use a different engine, set `TELEGRAM_STT_COMMAND` to a JSON array of arguments, where `{audio}` is the normalized WAV and `{workdir}` is the scratch directory. The transcript is read from `{workdir}/transcript.txt` when the command writes it, and from the command output otherwise:
 
-## Security notes
+```bash
+export TELEGRAM_STT_COMMAND='["/path/to/transcriber","{audio}","--txt","{workdir}"]'
+```
 
-- The Telegram token must never be sent through chat.
-- Only `TELEGRAM_ALLOWED_USER_ID` can use the bot.
-- Project paths are resolved under `WORK_DIR`.
-- Heavy folders such as `node_modules`, `.git`, `dist`, `build`, `.next`, `vendor`, and caches are ignored during discovery.
+`ffmpeg` has to be installed. `brew install ffmpeg`.

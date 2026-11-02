@@ -1,5 +1,5 @@
 import { Bot, InlineKeyboard, type Context } from "grammy";
-import { join } from "node:path";
+import { basename, extname, join } from "node:path";
 import type { AppConfig } from "../config/env";
 import type { JsonStore, ProjectChoice } from "../persistence/store";
 import { findProjects } from "../projects/discovery";
@@ -14,6 +14,7 @@ import {
   prepareImageAttachment,
   type ImageAttachment,
 } from "./media";
+import { detectTranscriber, normalizeAudioToWav } from "./audio";
 
 export function createTelegramBot(
   config: AppConfig,
@@ -119,6 +120,8 @@ export function createTelegramBot(
 
   bot.on("message:photo", async (ctx) => handlePhoto(ctx, config, store, piSessions, telegramBridge));
   bot.on("message:document", async (ctx) => handleDocument(ctx, config, store, piSessions, telegramBridge));
+  bot.on("message:voice", async (ctx) => handleVoice(ctx, config, store, piSessions, telegramBridge));
+  bot.on("message:audio", async (ctx) => handleVoice(ctx, config, store, piSessions, telegramBridge));
   bot.on("message:text", async (ctx) => handleText(ctx, store, piSessions, telegramBridge));
 
   return bot;
@@ -188,6 +191,85 @@ async function handleDocument(
     fileId: document.file_id,
     uniqueId: document.file_unique_id,
     caption: ctx.message?.caption?.trim(),
+  });
+}
+
+async function handleVoice(
+  ctx: Context,
+  config: AppConfig,
+  store: JsonStore,
+  piSessions: PiGatewaySessions,
+  telegramBridge: TelegramInteractionBridge,
+): Promise<void> {
+  telegramBridge.bindOwnerChat(ctx);
+  const state = await store.readState();
+  const projectPath = state.activeProjectPath;
+  if (!projectPath) {
+    await ctx.reply("Primero seleccioná un proyecto antes de mandar notas de voz.");
+    return;
+  }
+
+  const media = ctx.message?.voice ?? ctx.message?.audio;
+  if (!media) return;
+
+  const transcriber = await detectTranscriber();
+  if (!transcriber) {
+    await ctx.reply(
+      "No encontré un motor de transcripción local. Instalá mlx-whisper (pip install mlx-whisper) o whisper.cpp (brew install whisper.cpp), o definí TELEGRAM_STT_COMMAND.",
+    );
+    return;
+  }
+
+  let downloaded;
+  try {
+    downloaded = await downloadTelegramFile({
+      api: ctx.api,
+      token: config.telegramBotToken,
+      fileId: media.file_id,
+      uniqueId: media.file_unique_id,
+      dir: join(config.dataDir, "downloads"),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await ctx.reply(`No pude descargar el audio: ${message}`);
+    return;
+  }
+
+  const workDir = join(config.dataDir, "transcripts");
+  const wavPath = join(workDir, `${basename(downloaded.path, extname(downloaded.path))}.wav`);
+  try {
+    await normalizeAudioToWav(downloaded.path, wavPath);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await ctx.reply(`No pude preparar el audio: ${message}`);
+    return;
+  }
+
+  let transcript: string;
+  try {
+    transcript = await transcriber.transcribe({ audioPath: wavPath, workDir });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await ctx.reply(`No pude transcribir la nota de voz: ${message}`);
+    return;
+  }
+
+  if (!transcript.trim()) {
+    await ctx.reply("La nota de voz llegó en silencio, no hay nada que transcribir.");
+    return;
+  }
+
+  const prompt = [
+    "El usuario envió una nota de voz desde Telegram.",
+    media.duration ? `Duración: ${media.duration}s` : undefined,
+    `Transcripción: ${transcript.trim()}`,
+    `Archivo local: ${downloaded.path}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  void runPiPrompt(ctx, piSessions, projectPath, prompt).catch((error) => {
+    console.error("[pi-run:unhandled]", error instanceof Error ? { name: error.name, message: error.message } : error);
   });
 }
 
