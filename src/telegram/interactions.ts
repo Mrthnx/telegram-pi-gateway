@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { InlineKeyboard, type Context } from "grammy";
+import { InlineKeyboard, InputFile, type Context } from "grammy";
+import { stat } from "node:fs/promises";
+import { assertSendablePath, assertWithinUploadLimit, resolveMediaKind, type MediaKind } from "./media";
 
 type TelegramApi = Context["api"];
 
@@ -21,6 +23,18 @@ export type OwnerQuestionParams = {
   question: string;
   choices?: string[];
   allowFreeText?: boolean;
+};
+
+export type SendMediaParams = {
+  path: string;
+  caption?: string | undefined;
+  kind?: MediaKind | undefined;
+};
+
+export type SendMediaResult = {
+  kind: MediaKind;
+  path: string;
+  bytes: number;
 };
 
 export class TelegramInteractionBridge {
@@ -155,6 +169,37 @@ export class TelegramInteractionBridge {
     await ctx.answerCallbackQuery({ text: "Respuesta enviada." }).catch(() => undefined);
     await this.finishPending(choice, ctx);
     return true;
+  }
+
+  /**
+   * Delivers a local file to the owner.
+   *
+   * The file has to live inside the project or inside the gateway data
+   * directory, so the tool cannot be turned into a way to read arbitrary
+   * paths off the machine.
+   */
+  async sendMedia(params: SendMediaParams, options: { baseDir: string; allowedRoots: string[] }): Promise<SendMediaResult> {
+    if (!this.api || !this.activeChatId) {
+      throw new Error("No active Telegram owner chat is available for this Pi session.");
+    }
+
+    const path = await assertSendablePath(params.path, options.baseDir, options.allowedRoots);
+    const kind = resolveMediaKind(path, params.kind);
+    const stats = await stat(path);
+    assertWithinUploadLimit(kind, stats.size);
+
+    const file = new InputFile(path);
+    const other = params.caption ? { caption: params.caption } : {};
+    if (kind === "photo") {
+      await this.api.sendPhoto(this.activeChatId, file, other);
+    } else if (kind === "voice") {
+      await this.api.sendVoice(this.activeChatId, file, other);
+    } else {
+      await this.api.sendDocument(this.activeChatId, file, other);
+    }
+
+    console.info("[telegram-media:sent]", { kind, path, bytes: stats.size });
+    return { kind, path, bytes: stats.size };
   }
 
   async tryResolveText(ctx: Context, text: string): Promise<boolean> {

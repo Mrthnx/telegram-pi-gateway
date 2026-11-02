@@ -1,5 +1,5 @@
-import { mkdir, writeFile } from "node:fs/promises";
-import { extname, join } from "node:path";
+import { mkdir, realpath, stat, writeFile } from "node:fs/promises";
+import { extname, isAbsolute, join, relative, resolve } from "node:path";
 import { detectSupportedImageMimeTypeFromFile } from "@earendil-works/pi-coding-agent";
 
 /**
@@ -30,6 +30,74 @@ export type PreparedImage =
 export type TelegramFileApi = {
   getFile(fileId: string): Promise<{ file_path?: string | undefined }>;
 };
+
+export type MediaKind = "photo" | "document" | "voice";
+
+/** Upload ceilings enforced by the Telegram Bot API. */
+export const TELEGRAM_UPLOAD_LIMITS: Record<MediaKind, number> = {
+  photo: 10 * 1024 * 1024,
+  document: 50 * 1024 * 1024,
+  voice: 50 * 1024 * 1024,
+};
+
+const VOICE_EXTENSIONS = new Set([".ogg", ".oga", ".mp3", ".m4a"]);
+const PHOTO_EXTENSIONS = new Set([".jpg", ".jpeg", ".png", ".gif", ".webp"]);
+
+/**
+ * Picks how a file should be delivered.
+ *
+ * `sendVoice` only renders as a playable voice note for OGG+OPUS, MP3 and
+ * M4A, so anything else is delivered as a document instead of failing.
+ */
+export function resolveMediaKind(filePath: string, requested?: MediaKind | undefined): MediaKind {
+  if (requested) return requested;
+  const extension = extname(filePath).toLowerCase();
+  if (VOICE_EXTENSIONS.has(extension)) return "voice";
+  if (PHOTO_EXTENSIONS.has(extension)) return "photo";
+  return "document";
+}
+
+export function assertWithinUploadLimit(kind: MediaKind, bytes: number): void {
+  const limit = TELEGRAM_UPLOAD_LIMITS[kind];
+  if (bytes > limit) {
+    throw new Error(`El archivo supera el límite de ${Math.floor(limit / 1024 / 1024)} MB para ${kind}.`);
+  }
+}
+
+/**
+ * Resolves a file the agent wants to send and refuses anything outside the
+ * roots the gateway is allowed to expose.
+ *
+ * Symlinks are resolved before the containment check, so a link pointing
+ * outside the project does not become an escape hatch.
+ */
+export async function assertSendablePath(filePath: string, baseDir: string, allowedRoots: string[]): Promise<string> {
+  const absolute = isAbsolute(filePath) ? filePath : resolve(baseDir, filePath);
+  const actual = await realpath(absolute);
+
+  const roots: string[] = [];
+  for (const root of allowedRoots) {
+    try {
+      roots.push(await realpath(root));
+    } catch {
+      // A missing root simply cannot contain the file.
+    }
+  }
+
+  const inside = roots.some((root) => {
+    const relativePath = relative(root, actual);
+    return relativePath !== "" && !relativePath.startsWith("..") && !isAbsolute(relativePath);
+  });
+  if (!inside) {
+    throw new Error("El archivo está fuera del proyecto y de los datos del gateway.");
+  }
+
+  const stats = await stat(actual);
+  if (!stats.isFile()) {
+    throw new Error("La ruta no apunta a un archivo.");
+  }
+  return actual;
+}
 
 export type DownloadedFile = {
   path: string;

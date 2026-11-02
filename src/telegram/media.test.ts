@@ -1,14 +1,18 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  assertSendablePath,
+  assertWithinUploadLimit,
   buildImagePrompt,
   downloadTelegramFile,
   INLINE_IMAGE_MAX_BYTES,
   modelSupportsImages,
   prepareImageAttachment,
+  resolveMediaKind,
   TELEGRAM_MAX_DOWNLOAD_BYTES,
+  TELEGRAM_UPLOAD_LIMITS,
 } from "./media";
 
 const TINY_PNG_BASE64 =
@@ -207,5 +211,108 @@ describe("buildImagePrompt", () => {
     expect(prompt).toContain("no pudo adjuntarse");
     expect(prompt).toContain("descripción textual");
     expect(prompt).not.toContain("Caption del usuario");
+  });
+});
+
+describe("resolveMediaKind", () => {
+  test("sends images as photos", () => {
+    expect(resolveMediaKind("/tmp/a.png")).toBe("photo");
+    expect(resolveMediaKind("/tmp/a.JPG")).toBe("photo");
+    expect(resolveMediaKind("/tmp/a.webp")).toBe("photo");
+  });
+
+  test("sends playable audio formats as voice notes", () => {
+    expect(resolveMediaKind("/tmp/a.ogg")).toBe("voice");
+    expect(resolveMediaKind("/tmp/a.oga")).toBe("voice");
+    expect(resolveMediaKind("/tmp/a.mp3")).toBe("voice");
+    expect(resolveMediaKind("/tmp/a.m4a")).toBe("voice");
+  });
+
+  test("sends anything else as a document", () => {
+    expect(resolveMediaKind("/tmp/a.pdf")).toBe("document");
+    expect(resolveMediaKind("/tmp/a.wav")).toBe("document");
+    expect(resolveMediaKind("/tmp/a")).toBe("document");
+  });
+
+  test("honours an explicit kind", () => {
+    expect(resolveMediaKind("/tmp/a.png", "document")).toBe("document");
+    expect(resolveMediaKind("/tmp/a.pdf", "voice")).toBe("voice");
+  });
+});
+
+describe("assertWithinUploadLimit", () => {
+  test("accepts a file inside the limit", () => {
+    expect(() => assertWithinUploadLimit("photo", 1024)).not.toThrow();
+  });
+
+  test("rejects a photo over the 10 MB photo limit", () => {
+    expect(() => assertWithinUploadLimit("photo", TELEGRAM_UPLOAD_LIMITS.photo + 1)).toThrow(
+      "supera el límite de 10 MB para photo",
+    );
+  });
+
+  test("rejects a document over the 50 MB upload limit", () => {
+    expect(() => assertWithinUploadLimit("document", TELEGRAM_UPLOAD_LIMITS.document + 1)).toThrow(
+      "supera el límite de 50 MB para document",
+    );
+  });
+
+  test("exposes the Bot API upload limits", () => {
+    expect(TELEGRAM_UPLOAD_LIMITS.photo).toBe(10 * 1024 * 1024);
+    expect(TELEGRAM_UPLOAD_LIMITS.document).toBe(50 * 1024 * 1024);
+    expect(TELEGRAM_UPLOAD_LIMITS.voice).toBe(50 * 1024 * 1024);
+  });
+});
+
+describe("assertSendablePath", () => {
+  test("accepts a file inside the project", async () => {
+    const project = await mkdtemp(join(tmpdir(), "telegram-project-"));
+    const file = join(project, "diagram.png");
+    await writeFile(file, "x");
+
+    const resolved = await assertSendablePath(file, project, [project]);
+
+    expect(resolved.endsWith("diagram.png")).toBe(true);
+  });
+
+  test("resolves a relative path against the project root", async () => {
+    const project = await mkdtemp(join(tmpdir(), "telegram-project-"));
+    await writeFile(join(project, "diagram.png"), "x");
+
+    const resolved = await assertSendablePath("diagram.png", project, [project]);
+
+    expect(resolved.endsWith("diagram.png")).toBe(true);
+  });
+
+  test("refuses a file outside the allowed roots", async () => {
+    const project = await mkdtemp(join(tmpdir(), "telegram-project-"));
+    const outside = await mkdtemp(join(tmpdir(), "telegram-outside-"));
+    const secret = join(outside, "secret.txt");
+    await writeFile(secret, "x");
+
+    await expect(assertSendablePath(secret, project, [project])).rejects.toThrow(
+      "está fuera del proyecto y de los datos del gateway",
+    );
+  });
+
+  test("refuses a symlink that points outside the allowed roots", async () => {
+    const project = await mkdtemp(join(tmpdir(), "telegram-project-"));
+    const outside = await mkdtemp(join(tmpdir(), "telegram-outside-"));
+    const secret = join(outside, "secret.txt");
+    await writeFile(secret, "x");
+    const link = join(project, "link.txt");
+    await symlink(secret, link);
+
+    await expect(assertSendablePath(link, project, [project])).rejects.toThrow(
+      "está fuera del proyecto y de los datos del gateway",
+    );
+  });
+
+  test("refuses a directory", async () => {
+    const project = await mkdtemp(join(tmpdir(), "telegram-project-"));
+    const subdir = join(project, "sub");
+    await mkdir(subdir, { recursive: true });
+
+    await expect(assertSendablePath(subdir, project, [project])).rejects.toThrow("no apunta a un archivo");
   });
 });

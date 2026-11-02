@@ -7,7 +7,7 @@ import { TelegramInteractionBridge } from "./telegram/interactions";
 const config = await loadConfig();
 const store = new JsonStore(config.dataDir);
 const telegramBridge = new TelegramInteractionBridge();
-const piSessions = new PiGatewaySessions(store, telegramBridge, config.piModel);
+const piSessions = new PiGatewaySessions(store, telegramBridge, { piModel: config.piModel, dataDir: config.dataDir });
 const bot = createTelegramBot(config, store, piSessions, telegramBridge);
 
 process.once("SIGINT", shutdown);
