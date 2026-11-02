@@ -1,4 +1,5 @@
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 
 /** Sample rate the whisper models expect. */
@@ -15,10 +16,11 @@ export type CommandOutcome = {
 export async function runCommand(
   command: string,
   args: string[],
-  options?: { cwd?: string | undefined; timeoutMs?: number | undefined },
+  options?: { cwd?: string | undefined; timeoutMs?: number | undefined; stdin?: string | undefined },
 ): Promise<CommandOutcome> {
   const proc = Bun.spawn([command, ...args], {
     ...(options?.cwd ? { cwd: options.cwd } : {}),
+    ...(options?.stdin !== undefined ? { stdin: new TextEncoder().encode(options.stdin) } : {}),
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -290,19 +292,157 @@ export async function listSayVoices(): Promise<string[]> {
   return cachedVoices;
 }
 
+export type VoiceSynthesizer = {
+  id: string;
+  /** Produces an intermediate audio file at `outputPath`. */
+  synthesize(args: { text: string; outputPath: string; voice?: string | undefined }): Promise<void>;
+};
+
+let cachedSynthesizer: VoiceSynthesizer | null | undefined;
+
+/**
+ * Picks the engine that turns text into speech.
+ *
+ * macOS `say` is the fallback because it needs no credentials, but its voices
+ * are the classic non-neural ones and they sound robotic. A neural engine
+ * (Piper) or an explicit command wins when one is available.
+ */
+export async function detectSynthesizer(): Promise<VoiceSynthesizer | null> {
+  if (cachedSynthesizer !== undefined) return cachedSynthesizer;
+
+  const configured = process.env.TELEGRAM_TTS_COMMAND?.trim();
+  if (configured) {
+    cachedSynthesizer = configuredSynthesizer(configured);
+    return cachedSynthesizer;
+  }
+
+  cachedSynthesizer = (await piperSynthesizer()) ?? (await saySynthesizer());
+  return cachedSynthesizer;
+}
+
+/** Only used by the tests, to drop the cached detection result. */
+export function resetSynthesizerCache(): void {
+  cachedSynthesizer = undefined;
+}
+
+function configuredSynthesizer(command: string): VoiceSynthesizer {
+  let argv: string[];
+  try {
+    const parsed = JSON.parse(command) as unknown;
+    if (!Array.isArray(parsed) || parsed.length === 0 || parsed.some((part) => typeof part !== "string")) {
+      throw new Error("the command has to be a JSON array of strings");
+    }
+    argv = parsed as string[];
+  } catch (error) {
+    throw new Error(`TELEGRAM_TTS_COMMAND is invalid: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  return {
+    id: "configured",
+    synthesize: async ({ text, outputPath }) => {
+      const args = argv.map((part) =>
+        part.replaceAll("{text}", text).replaceAll("{output}", outputPath),
+      );
+      const outcome = await runCommand(args[0]!, args.slice(1), { stdin: text, timeoutMs: 120_000 });
+      if (outcome.exitCode !== 0) {
+        const detail = outcome.stderr.trim() || outcome.stdout.trim() || `código de salida ${outcome.exitCode}`;
+        throw new Error(`El comando de síntesis falló: ${detail}`);
+      }
+    },
+  };
+}
+
+/**
+ * Piper is a local neural engine: natural sounding, no credentials, and it
+ * has Spanish voices. It needs a downloaded model, so it is only used when
+ * both the binary and a model are present.
+ */
+async function piperSynthesizer(): Promise<VoiceSynthesizer | null> {
+  const binary = Bun.which("piper");
+  if (!binary) return null;
+  const model = resolvePiperModel();
+  if (!model) return null;
+
+  return {
+    id: "piper",
+    synthesize: async ({ text, outputPath }) => {
+      const outcome = await runCommand(binary, ["--model", model, "--output_file", outputPath], {
+        stdin: text,
+        timeoutMs: 120_000,
+      });
+      if (outcome.exitCode !== 0) {
+        const detail = outcome.stderr.trim() || outcome.stdout.trim() || `código de salida ${outcome.exitCode}`;
+        throw new Error(`piper falló: ${detail}`);
+      }
+    },
+  };
+}
+
+async function saySynthesizer(): Promise<VoiceSynthesizer | null> {
+  const binary = Bun.which("say");
+  if (!binary) return null;
+
+  return {
+    id: "say",
+    synthesize: async ({ text, outputPath, voice }) => {
+      const textFile = `${outputPath}.txt`;
+      await writeFile(textFile, text, "utf8");
+      try {
+        let lastError = "sin detalle";
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          const outcome = await runCommand(
+            binary,
+            [...(voice ? ["-v", voice] : []), "-f", textFile, "-o", outputPath],
+            { timeoutMs: 60_000 },
+          );
+          if (outcome.exitCode === 0) {
+            lastError = "";
+            break;
+          }
+          lastError = outcome.stderr.trim() || outcome.stdout.trim() || `código de salida ${outcome.exitCode}`;
+          // The macOS speech service occasionally fails to start; one retry is
+          // enough to hide that without hiding a real error.
+          await Bun.sleep(500);
+        }
+        if (lastError) {
+          throw new Error(`say falló: ${lastError}`);
+        }
+      } finally {
+        await rm(textFile, { force: true }).catch(() => undefined);
+      }
+    },
+  };
+}
+
+function resolvePiperModel(): string | null {
+  const configured = process.env.TELEGRAM_TTS_MODEL?.trim();
+  const candidates = configured
+    ? [configured]
+    : [
+        join(process.env.HOME ?? "", ".local", "share", "piper", "es_ES-sharvard-medium.onnx"),
+        join(process.env.HOME ?? "", ".cache", "piper", "es_ES-sharvard-medium.onnx"),
+      ];
+  for (const candidate of candidates) {
+    if (candidate.endsWith(".onnx") && existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
 /**
  * Turns text into a playable Telegram voice note.
  *
- * macOS `say` does the synthesis and ffmpeg encodes the result as mono
+ * The engine writes an intermediate audio file and ffmpeg encodes it as mono
  * OGG/OPUS, which is the format Telegram renders as a voice message.
  */
 export async function synthesizeVoiceNote(text: string, outputPath: string, voice?: string | undefined): Promise<void> {
-  const say = Bun.which("say");
-  if (!say) {
-    throw new Error("El comando 'say' de macOS no está disponible, no se puede sintetizar la nota de voz.");
+  const synthesizer = await detectSynthesizer();
+  if (!synthesizer) {
+    throw new Error("No hay ningún motor de síntesis de voz disponible.");
   }
 
-  if (voice) {
+  if (synthesizer.id === "say" && voice) {
     const voices = await listSayVoices();
     const requested = voice.trim().toLowerCase();
     if (voices.length > 0 && !voices.some((name) => name.toLowerCase() === requested)) {
@@ -312,33 +452,18 @@ export async function synthesizeVoiceNote(text: string, outputPath: string, voic
   }
 
   await mkdir(dirname(outputPath), { recursive: true });
-  const textFile = `${outputPath}.txt`;
-  const audioFile = outputPath.replace(/\.ogg$/u, ".aiff");
-  await writeFile(textFile, text, "utf8");
+  const intermediate = outputPath.replace(/\.ogg$/u, synthesizer.id === "say" ? ".aiff" : ".wav");
+  await synthesizer.synthesize({ text, outputPath: intermediate, voice });
 
   try {
-    let lastError = "sin detalle";
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      const outcome = await runCommand(
-        say,
-        [...(voice ? ["-v", voice] : []), "-f", textFile, "-o", audioFile],
-        { timeoutMs: 60_000 },
-      );
-      if (outcome.exitCode === 0) {
-        lastError = "";
-        break;
-      }
-      lastError = outcome.stderr.trim() || outcome.stdout.trim() || `código de salida ${outcome.exitCode}`;
-      // The macOS speech service occasionally fails to start; one retry is
-      // enough to hide that without hiding a real error.
-      await Bun.sleep(500);
-    }
-    if (lastError) {
-      throw new Error(`say falló: ${lastError}`);
-    }
-    await runFfmpeg(["-i", audioFile, "-c:a", "libopus", "-b:a", "32k", "-ac", "1", "-ar", "48000", outputPath]);
+    await runFfmpeg(["-i", intermediate, "-c:a", "libopus", "-b:a", "48k", "-ac", "1", "-ar", "48000", outputPath]);
   } finally {
-    await rm(textFile, { force: true }).catch(() => undefined);
-    await rm(audioFile, { force: true }).catch(() => undefined);
+    await rm(intermediate, { force: true }).catch(() => undefined);
   }
 }
+
+/** The voice used when the caller does not ask for a specific one. */
+export function defaultVoice(): string | undefined {
+  return process.env.TELEGRAM_VOICE?.trim() || undefined;
+}
+

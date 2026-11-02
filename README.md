@@ -298,9 +298,30 @@ export TELEGRAM_STT_COMMAND='["/path/to/transcriber","{audio}","--txt","{workdir
 Two Pi tools let the agent send you files:
 
 - `telegram_send_media` delivers a file from the active project (or from `DATA_DIR`) as a photo, a document or a voice note. The kind is inferred from the extension. Voice notes are only playable for `.ogg`, `.oga`, `.mp3` and `.m4a`; anything else is delivered as a document.
-- `telegram_send_voice` turns a text answer into a spoken voice note, synthesized locally with macOS `say` and encoded as OGG/OPUS. No credentials and no network call. The requested voice is validated against the voices macOS exposes, so a typo is an error instead of a silent fallback to the default voice.
+- `telegram_send_voice` turns a text answer into a spoken voice note. The text is spoken and encoded as OGG/OPUS, which is the format Telegram renders as a playable voice note.
 
 Files sent to Telegram are limited by the Bot API: 10 MB for a photo, 50 MB for a document or a voice note.
+
+### Speech engines
+
+The voice note engine is picked in this order:
+
+1. `TELEGRAM_TTS_COMMAND` — an explicit engine, as a JSON array of arguments. `{text}` is the text to speak, `{output}` is the file the engine has to write, and the text is also fed on stdin.
+2. **Piper** — a local neural engine, natural sounding and free. It needs `pip install piper-tts` plus a downloaded model, and it is only used when `TELEGRAM_TTS_MODEL` points at a `.onnx` file:
+
+   ```bash
+   pip install piper-tts
+   mkdir -p ~/.local/share/piper
+   curl -fL -o ~/.local/share/piper/es_ES-sharvard-medium.onnx \
+     https://huggingface.co/rhasspy/piper-voices/resolve/main/es/es_ES/sharvard/medium/es_ES-sharvard-medium.onnx
+   curl -fL -o ~/.local/share/piper/es_ES-sharvard-medium.onnx.json \
+     https://huggingface.co/rhasspy/piper-voices/resolve/main/es/es_ES/sharvard/medium/es_ES-sharvard-medium.onnx.json
+   export TELEGRAM_TTS_MODEL=~/.local/share/piper/es_ES-sharvard-medium.onnx
+   ```
+
+3. **macOS `say`** — the fallback. It needs nothing, but its voices are the classic non-neural ones and they sound robotic. The only non-novelty Spanish voices macOS ships are `Mónica` and `Paulina`.
+
+`TELEGRAM_VOICE` sets the voice used when the owner does not name one. The voice is validated against the voices the engine actually exposes, so a typo is an error instead of a silent fallback to the default voice.
 
 ## Pi package gallery
 

@@ -3,9 +3,12 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  defaultVoice,
+  detectSynthesizer,
   detectTranscriber,
   listSayVoices,
   normalizeAudioToWav,
+  resetSynthesizerCache,
   resetTranscriberCache,
   runCommand,
   synthesizeVoiceNote,
@@ -233,6 +236,9 @@ describe("synthesizeVoiceNote", () => {
   });
 
   test.skipIf(!hasSay || !hasFfmpeg)("reports an unknown voice instead of silently using the default one", async () => {
+    const synthesizer = await detectSynthesizer();
+    if (synthesizer?.id !== "say") return;
+
     const dir = await mkdtemp(join(tmpdir(), "telegram-voice-"));
     const output = join(dir, "voice.ogg");
 
@@ -244,5 +250,100 @@ describe("synthesizeVoiceNote", () => {
 
     expect(voices.length).toBeGreaterThan(0);
     expect(voices.some((name) => name.includes("Mónica") || name.includes("Alex"))).toBe(true);
+  });
+});
+
+describe("detectSynthesizer", () => {
+  test("uses the configured command and substitutes the placeholders", async () => {
+    resetSynthesizerCache();
+    const previous = process.env.TELEGRAM_TTS_COMMAND;
+    process.env.TELEGRAM_TTS_COMMAND = JSON.stringify([
+      "/bin/sh",
+      "-c",
+      "printf '%s' \"$1\" > \"$2\"",
+      "sh",
+      "{text}",
+      "{output}",
+    ]);
+
+    try {
+      const synthesizer = await detectSynthesizer();
+      expect(synthesizer?.id).toBe("configured");
+      if (!synthesizer) return;
+
+      const dir = await mkdtemp(join(tmpdir(), "telegram-tts-"));
+      const output = join(dir, "voz.txt");
+      await synthesizer.synthesize({ text: "hola mundo", outputPath: output });
+
+      expect(await readFile(output, "utf8")).toBe("hola mundo");
+    } finally {
+      if (previous === undefined) delete process.env.TELEGRAM_TTS_COMMAND;
+      else process.env.TELEGRAM_TTS_COMMAND = previous;
+      resetSynthesizerCache();
+    }
+  });
+
+  test("feeds the text to the engine on stdin as well", async () => {
+    resetSynthesizerCache();
+    const previous = process.env.TELEGRAM_TTS_COMMAND;
+    process.env.TELEGRAM_TTS_COMMAND = JSON.stringify([
+      "/bin/sh",
+      "-c",
+      "cat > \"$1\"",
+      "sh",
+      "{output}",
+    ]);
+
+    try {
+      const synthesizer = await detectSynthesizer();
+      if (!synthesizer) throw new Error("the configured synthesizer was not detected");
+
+      const dir = await mkdtemp(join(tmpdir(), "telegram-tts-"));
+      const output = join(dir, "voz.txt");
+      await synthesizer.synthesize({ text: "texto por stdin", outputPath: output });
+
+      expect(await readFile(output, "utf8")).toBe("texto por stdin");
+    } finally {
+      if (previous === undefined) delete process.env.TELEGRAM_TTS_COMMAND;
+      else process.env.TELEGRAM_TTS_COMMAND = previous;
+      resetSynthesizerCache();
+    }
+  });
+
+  test("rejects a malformed configured command", async () => {
+    resetSynthesizerCache();
+    const previous = process.env.TELEGRAM_TTS_COMMAND;
+    process.env.TELEGRAM_TTS_COMMAND = "not json";
+
+    try {
+      await expect(detectSynthesizer()).rejects.toThrow("TELEGRAM_TTS_COMMAND is invalid");
+    } finally {
+      if (previous === undefined) delete process.env.TELEGRAM_TTS_COMMAND;
+      else process.env.TELEGRAM_TTS_COMMAND = previous;
+      resetSynthesizerCache();
+    }
+  });
+});
+
+describe("defaultVoice", () => {
+  test("is undefined when nothing is configured", () => {
+    const previous = process.env.TELEGRAM_VOICE;
+    delete process.env.TELEGRAM_VOICE;
+    try {
+      expect(defaultVoice()).toBeUndefined();
+    } finally {
+      if (previous !== undefined) process.env.TELEGRAM_VOICE = previous;
+    }
+  });
+
+  test("returns the configured voice", () => {
+    const previous = process.env.TELEGRAM_VOICE;
+    process.env.TELEGRAM_VOICE = "  Mónica  ";
+    try {
+      expect(defaultVoice()).toBe("Mónica");
+    } finally {
+      if (previous === undefined) delete process.env.TELEGRAM_VOICE;
+      else process.env.TELEGRAM_VOICE = previous;
+    }
   });
 });
