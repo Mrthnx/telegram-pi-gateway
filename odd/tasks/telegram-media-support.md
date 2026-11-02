@@ -45,7 +45,7 @@ Blocked decisions, owned by the owner: the speech-to-text provider for inbound a
 ## Owner decisions
 
 - 2026-11-02: inbound audio is transcribed with a **local** engine (mlx-whisper or whisper.cpp). The audio never leaves the machine.
-- 2026-11-02: outbound audio is synthesized with **macOS `say`**, so it needs no credentials and no network call.
+- 2026-11-02: outbound audio is synthesized with **macOS `say`** by default, and later upgraded to a **local neural engine (Piper)** by owner decision, because the macOS voices are the classic non-neural ones and sounded robotic. macOS `say` stays as the fallback that always works.
 - 2026-11-02: Pi-native image generation is **out of scope**. The agent delivers the files it produces; generating them is the agent's own job.
 
 ## Tasks
@@ -61,6 +61,7 @@ Blocked decisions, owned by the owner: the speech-to-text provider for inbound a
   - Evidence: `src/telegram/media.ts` resolves the delivery kind from the extension, enforces the Bot API upload ceilings (10 MB for a photo, 50 MB for a document or a voice note) and resolves the path through `realpath` before checking containment, so a symlink cannot escape the project. `src/telegram/interactions.ts` `sendMedia` performs the upload. `src/pi/session-manager.ts` registers the tool per session, scoped to the active project plus the gateway data directory.
 - [x] T4 (S2) Turn a text answer into a voice note: synthesize, convert to OGG/OPUS, send. Inline. Commit: `feat(telegram): reply with voice notes`.
   - Evidence: `src/telegram/audio.ts` `synthesizeVoiceNote` drives macOS `say` and encodes the result as mono OGG/OPUS at 48 kHz, which is the format Telegram renders as a playable voice note. The requested voice is validated against the list macOS actually exposes, because `say` accepts an unknown voice name with exit code 0 and silently falls back to the default one. `src/pi/session-manager.ts` registers the `telegram_send_voice` tool, which reuses the path guards of `telegram_send_media`.
+  - Upgraded on 2026-11-02 to a local neural engine: the engine is resolved in the order explicit command, Piper, macOS `say`, and every engine produces the same mono OGG/OPUS output. Verified end to end with Piper and the `es_ES-sharvard-medium` model: 4.6 s of speech encoded as Opus at 48 kHz, synthesized in 1.8 s, with a real audio level instead of silence. The tool result reports which engine and voice actually spoke, because a neural engine has one fixed voice and a named voice would otherwise be silently ignored.
   - Slice boundary: the inbound transcription unit closed at 535 authored changed lines, over the ~400-line target, because the download, normalization, detection and failure handling are one behavior. The outbound unit that follows stays at 186 lines.
 - [ ] T5 (S2) Generate images through a Pi image model and deliver them. Dropped on 2026-11-02 by owner decision: out of scope for this feature.
 

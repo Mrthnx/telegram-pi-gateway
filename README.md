@@ -307,7 +307,7 @@ Files sent to Telegram are limited by the Bot API: 10 MB for a photo, 50 MB for 
 The voice note engine is picked in this order:
 
 1. `TELEGRAM_TTS_COMMAND` — an explicit engine, as a JSON array of arguments. `{text}` is the text to speak, `{output}` is the file the engine has to write, and the text is also fed on stdin.
-2. **Piper** — a local neural engine, natural sounding and free. It needs `pip install piper-tts` plus a downloaded model, and it is only used when `TELEGRAM_TTS_MODEL` points at a `.onnx` file:
+2. **Piper** — a local neural engine, natural sounding and free. It needs `pip install piper-tts` plus a downloaded model:
 
    ```bash
    pip install piper-tts
@@ -316,12 +316,13 @@ The voice note engine is picked in this order:
      https://huggingface.co/rhasspy/piper-voices/resolve/main/es/es_ES/sharvard/medium/es_ES-sharvard-medium.onnx
    curl -fL -o ~/.local/share/piper/es_ES-sharvard-medium.onnx.json \
      https://huggingface.co/rhasspy/piper-voices/resolve/main/es/es_ES/sharvard/medium/es_ES-sharvard-medium.onnx.json
-   export TELEGRAM_TTS_MODEL=~/.local/share/piper/es_ES-sharvard-medium.onnx
    ```
+
+   The gateway finds the model in `~/.local/share/piper` on its own, and `TELEGRAM_TTS_MODEL` overrides the location. `pip install --user` puts the `piper` script in `~/Library/Python/<version>/bin`, outside PATH; the gateway looks there too, so no PATH change is needed.
 
 3. **macOS `say`** — the fallback. It needs nothing, but its voices are the classic non-neural ones and they sound robotic. The only non-novelty Spanish voices macOS ships are `Mónica` and `Paulina`.
 
-`TELEGRAM_VOICE` sets the voice used when the owner does not name one. The voice is validated against the voices the engine actually exposes, so a typo is an error instead of a silent fallback to the default voice.
+`TELEGRAM_VOICE` sets the voice used when the owner does not name one. The voice is validated against the voices the engine actually exposes, so a typo is an error instead of a silent fallback to the default voice. A neural engine has one fixed voice, so a named voice is ignored there and the tool reports which engine and voice actually spoke.
 
 ## Pi package gallery
 

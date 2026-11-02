@@ -123,7 +123,7 @@ function createTelegramSendVoiceTool(telegramBridge: TelegramInteractionBridge, 
       "This session is running through Telegram. When the owner asks for an audio answer, call telegram_send_voice with the text you want spoken.",
       "Keep the text short: a voice note that runs for minutes is hard to listen to.",
       "The voice note replaces the written answer, so do not also paste the same text in the reply.",
-      "Leave the voice unset unless the owner named one. When they do name one, use the exact macOS voice name, for example Mónica or Paulina.",
+      "Leave the voice unset unless the owner named one. Named voices only work with the macOS engine; a local neural engine has one fixed voice.",
     ],
     parameters: Type.Object({
       text: Type.String({ minLength: 1, maxLength: 4000 }),
@@ -133,14 +133,20 @@ function createTelegramSendVoiceTool(telegramBridge: TelegramInteractionBridge, 
     execute: async (_toolCallId, params) => {
       const outputPath = join(dataDir, "voice", `voice-${Date.now()}.ogg`);
       const voice = params.voice ?? defaultVoice();
-      await synthesizeVoiceNote(params.text, outputPath, voice);
+      const note = await synthesizeVoiceNote(params.text, outputPath, voice);
       const result = await telegramBridge.sendMedia(
         { path: outputPath, kind: "voice" },
         { baseDir: projectPath, allowedRoots },
       );
+      const spokenAs = note.voice ? ` with voice ${note.voice}` : "";
       return {
-        content: [{ type: "text", text: `Sent a voice note to the Telegram owner: ${result.path}` }],
-        details: result,
+        content: [
+          {
+            type: "text",
+            text: `Sent a voice note to the Telegram owner${spokenAs} (engine: ${note.engine}): ${result.path}`,
+          },
+        ],
+        details: { ...result, engine: note.engine, voice: note.voice },
       };
     },
   });

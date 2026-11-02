@@ -1,5 +1,5 @@
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 
 /** Sample rate the whisper models expect. */
@@ -358,7 +358,7 @@ function configuredSynthesizer(command: string): VoiceSynthesizer {
  * both the binary and a model are present.
  */
 async function piperSynthesizer(): Promise<VoiceSynthesizer | null> {
-  const binary = Bun.which("piper");
+  const binary = findPiperBinary();
   if (!binary) return null;
   const model = resolvePiperModel();
   if (!model) return null;
@@ -414,21 +414,53 @@ async function saySynthesizer(): Promise<VoiceSynthesizer | null> {
   };
 }
 
-function resolvePiperModel(): string | null {
-  const configured = process.env.TELEGRAM_TTS_MODEL?.trim();
-  const candidates = configured
-    ? [configured]
-    : [
-        join(process.env.HOME ?? "", ".local", "share", "piper", "es_ES-sharvard-medium.onnx"),
-        join(process.env.HOME ?? "", ".cache", "piper", "es_ES-sharvard-medium.onnx"),
-      ];
-  for (const candidate of candidates) {
-    if (candidate.endsWith(".onnx") && existsSync(candidate)) {
-      return candidate;
+/**
+ * Finds the Piper binary.
+ *
+ * `pip install --user` puts it outside PATH on macOS, so the usual user
+ * install locations are checked as well.
+ */
+function findPiperBinary(): string | null {
+  const onPath = Bun.which("piper");
+  if (onPath) return onPath;
+
+  const home = process.env.HOME ?? "";
+  const candidates = [join(home, ".local", "bin", "piper")];
+  try {
+    for (const version of readdirSync(join(home, "Library", "Python"))) {
+      candidates.push(join(home, "Library", "Python", version, "bin", "piper"));
     }
+  } catch {
+    // the directory does not exist
+  }
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
   }
   return null;
 }
+
+function resolvePiperModel(): string | null {
+  const configured = process.env.TELEGRAM_TTS_MODEL?.trim();
+  if (configured) {
+    return existsSync(configured) ? configured : null;
+  }
+
+  const dir = join(process.env.HOME ?? "", ".local", "share", "piper");
+  try {
+    for (const name of readdirSync(dir)) {
+      if (name.endsWith(".onnx")) return join(dir, name);
+    }
+  } catch {
+    // the directory does not exist
+  }
+  return null;
+}
+
+export type VoiceNoteResult = {
+  engine: string;
+  /** The voice that was actually used, when the engine supports named voices. */
+  voice?: string | undefined;
+};
 
 /**
  * Turns text into a playable Telegram voice note.
@@ -436,12 +468,17 @@ function resolvePiperModel(): string | null {
  * The engine writes an intermediate audio file and ffmpeg encodes it as mono
  * OGG/OPUS, which is the format Telegram renders as a voice message.
  */
-export async function synthesizeVoiceNote(text: string, outputPath: string, voice?: string | undefined): Promise<void> {
+export async function synthesizeVoiceNote(
+  text: string,
+  outputPath: string,
+  voice?: string | undefined,
+): Promise<VoiceNoteResult> {
   const synthesizer = await detectSynthesizer();
   if (!synthesizer) {
     throw new Error("No hay ningún motor de síntesis de voz disponible.");
   }
 
+  let usedVoice: string | undefined;
   if (synthesizer.id === "say" && voice) {
     const voices = await listSayVoices();
     const requested = voice.trim().toLowerCase();
@@ -449,6 +486,7 @@ export async function synthesizeVoiceNote(text: string, outputPath: string, voic
       const preview = voices.slice(0, 10).join(", ");
       throw new Error(`La voz "${voice}" no existe. Voces disponibles: ${preview}`);
     }
+    usedVoice = voice;
   }
 
   await mkdir(dirname(outputPath), { recursive: true });
@@ -460,6 +498,8 @@ export async function synthesizeVoiceNote(text: string, outputPath: string, voic
   } finally {
     await rm(intermediate, { force: true }).catch(() => undefined);
   }
+
+  return { engine: synthesizer.id, voice: usedVoice };
 }
 
 /** The voice used when the caller does not ask for a specific one. */

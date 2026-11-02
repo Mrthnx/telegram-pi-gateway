@@ -14,7 +14,7 @@ in_progress
 
 ## Owner decisions
 - Inbound audio: local engine (mlx-whisper or whisper.cpp). The audio never leaves the machine.
-- Outbound audio: macOS `say`, no credentials.
+- Outbound audio: local neural engine (Piper), with macOS `say` as the fallback that always works.
 - Pi-native image generation: out of scope.
 
 ## Notes

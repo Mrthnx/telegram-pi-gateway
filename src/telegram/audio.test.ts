@@ -245,6 +245,32 @@ describe("synthesizeVoiceNote", () => {
     await expect(synthesizeVoiceNote("prueba", output, "Voz Que No Existe")).rejects.toThrow("no existe");
   });
 
+  test.skipIf(!hasSay || !hasFfmpeg)("reports the engine and the voice that were used", async () => {
+    const synthesizer = await detectSynthesizer();
+    if (synthesizer?.id !== "say") return;
+
+    const dir = await mkdtemp(join(tmpdir(), "telegram-voice-"));
+    const output = join(dir, "voice.ogg");
+
+    const result = await synthesizeVoiceNote("prueba de voz", output, "Mónica");
+
+    expect(result.engine).toBe("say");
+    expect(result.voice).toBe("Mónica");
+  });
+
+  test.skipIf(!hasSay || !hasFfmpeg)("reports an engine without named voices when one is asked for", async () => {
+    const synthesizer = await detectSynthesizer();
+    if (synthesizer?.id !== "piper") return;
+
+    const dir = await mkdtemp(join(tmpdir(), "telegram-voice-"));
+    const output = join(dir, "voice.ogg");
+
+    const result = await synthesizeVoiceNote("prueba de voz", output, "Mónica");
+
+    expect(result.engine).toBe("piper");
+    expect(result.voice).toBeUndefined();
+  });
+
   test.skipIf(!hasSay)("lists the available macOS voices", async () => {
     const voices = await listSayVoices();
 
